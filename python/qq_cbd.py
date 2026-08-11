@@ -67,9 +67,19 @@ def order_effect(p_ab: Array2, p_ba: Array2) -> dict:
     """Magnitude of the order effect, independent of whether QQ holds.
 
     Returns the marginal shift of each question's "yes" rate between the two
-    orders and the total variation between the two order-conditioned joints
-    (mapped onto a common (A,B) index). This is the ``O_SS`` order-sensitivity
-    quantity the Kang (2026) discriminant pairs with |q|.
+    orders, their sum (``o_ss``), and the total variation between the two
+    order-conditioned joints (mapped onto a common (A,B) index).
+
+    ``o_ss`` = ``|a_yes_shift| + |b_yes_shift|`` is Kang's (2026) ``O_SS``
+    order-sensitivity score — the quantity the CbD translation actually pairs
+    with ``|q|`` in ``|q_QQ| <= O_SS`` — verified against the paper (round-2
+    review, 2026-08-11). An earlier version of this docstring named
+    ``total_variation`` as O_SS instead; TV of the two joints and the sum of
+    marginal shifts are NOT interchangeable (TV can exceed the marginal sum),
+    so anything applying Kang's inequality must use ``o_ss``, not ``tv``.
+    ``total_variation`` is kept as a separate, real statistic in its own right
+    (e.g. for a direct quantum-vs-classical joint-distance comparison) — just
+    not the one the discriminant below wants.
     """
     a = _validate_joint(p_ab)  # [A][B]
     b = _validate_joint(p_ba)  # [B][A]
@@ -78,12 +88,15 @@ def order_effect(p_ab: Array2, p_ba: Array2) -> dict:
     a_yes_ba = b[:, 1].sum()
     b_yes_ab = a[:, 1].sum()
     b_yes_ba = b[1, :].sum()
+    a_yes_shift = float(a_yes_ab - a_yes_ba)
+    b_yes_shift = float(b_yes_ab - b_yes_ba)
     # Re-index the BA joint onto (A,B): b is [B][A] -> ab_from_ba[A][B] = b[B][A]
     ab_from_ba = b.T
     tv = 0.5 * float(np.abs(a - ab_from_ba).sum())
     return {
-        "a_yes_shift": float(a_yes_ab - a_yes_ba),
-        "b_yes_shift": float(b_yes_ab - b_yes_ba),
+        "a_yes_shift": a_yes_shift,
+        "b_yes_shift": b_yes_shift,
+        "o_ss": float(abs(a_yes_shift) + abs(b_yes_shift)),
         "total_variation": tv,
         "order_sensitive": tv > 1e-6,
     }

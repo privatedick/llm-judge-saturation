@@ -24,18 +24,25 @@ whole point of this note. Roadmap:
 4. A small perturbation bound ties the "how far can order/framing move a
    decision" question to the same state→transformation→observation picture.
 
-The unifying object is not "saturation." It is loss of commutativity under a
-state-dependent transformation, plus a separate loss of distinguishability at the
-observation. Same geometry of *state, transformation, observable* — not one
-physical mechanism.
+The unifying object is not "saturation." It is loss of commutativity — whether
+from non-commuting operators or from an update whose effective increment becomes
+state-dependent — plus a separate loss of distinguishability at the observation.
+Same geometry of *state, transformation, observable* — not one physical
+mechanism.
 
 ## Order effects are non-commuting operations
 
 Write `T_A`, `T_B` for the operations of processing item A, item B. An order
 effect is simply `T_B(T_A(x)) ≠ T_A(T_B(x))`: the operations don't commute, so
-which one runs first changes the state the second one acts on. That requires the
-transformations to be **state-dependent** — a linear, state-independent update
-always commutes.
+which one runs first changes the state the second one acts on. That can happen
+two ways: the operators themselves may be linear but non-commuting (projectors,
+below, are the standard example — `AB ≠ BA` holds regardless of the state they
+act on), or an update that is *additive with a constant increment* may become
+non-commuting by having that increment start depending on the current state.
+Constant additive updates alone (`x ↦ x + δ` for fixed `δ`) always commute —
+translations compose order-free — so it takes something like a clamp turning
+the effective increment into a function of state to make an *additive* update
+non-commuting (next section).
 
 Quantum cognition models this with vectors and projectors, and offers a
 parameter-free structural invariant, the **QQ equality** (Wang & Busemeyer 2013;
@@ -89,22 +96,34 @@ the observation. Both reduce distinguishability, which is why they share a name 
 but one creates an effect and the other hides it.
 
 To put numbers on it, I ran three open judges (deepseek-v4-flash, qwen3-8b,
-mistral-nemo) on six pairwise items, both orders, 40 samples per order (via
-OpenRouter, ~$0.11). **29 of 36 order-conditioned distributions were
-near-deterministic** — top verdict probability ≥ 0.9, mean effective support
-`N_eff ≈ 1.17` where two outcomes allow up to 2. On the four items with a clearly
-better answer, every judge collapses onto the correct one: benign saturation.
+mistral-nemo) on six pairwise items, a fully crossed content-**position** ×
+**label-assignment** design (four conditions per item — decoupling *where* an
+answer sits from *which letter* it is called; see "Honest limits" below for why
+that matters), 40 samples per condition (via OpenRouter, ~$0.21). Saturation is
+flagged by an exact one-sided binomial test against the 0.9 floor, not a bare
+point-estimate comparison — the gate box below explains why the raw comparison
+over-flags. **46 of 72 (position, label) distributions were confidently
+saturated**, 14 of 18 cells fail the two-sided gate (any of their 4 conditions
+saturated), mean effective support `N_eff ≈ 1.21`. On the four items with a
+clearly better answer, every judge collapses onto the correct one: benign
+saturation.
 
-The order effects concentrate entirely on the two content-ties. Three of eighteen
-cells show an effect surviving Holm-Bonferroni correction (Fisher exact,
-p = 0.0007–0.0019, magnitude 0.25–0.33), and **all three are
-dispersion-asymmetric**: one presentation order leaves the judge genuinely
-uncertain (`N_eff` 1.6–2.0) while the other collapses it to near-determinism
-(`N_eff` 1.0–1.2). The two cells where *both* orders are dispersed show no
-significant effect at all (p = 0.65, 0.78). So the order effect here is not a
-uniform slot preference — the mean slot-A rate on ties is 0.47, i.e. no global
-position bias — but an asymmetry in *how certain* the judge becomes depending on
-presentation order. A single reported "position-bias %" hides that entirely.
+Decoupling position from label changes the *finding*, not just the numbers.
+**Zero of eighteen cells show a content-position order effect distinguishable
+from noise** — even uncorrected, every Fisher-exact p on the two tie items is
+≥ 0.20; once label is counterbalanced, genuine position-driven order effects are
+small (mean 0.046 on ties) and don't survive at this k. What *is* large is a
+pure **label/token preference**, measurable for the first time because the
+design separates it: on tie items, the judge's raw rate of answering "A" —
+pooled across content and position, so "A" is attached to each answer and each
+slot equally often — deviates from the unbiased 0.5 by a mean of 0.140, three
+times the size of the position effect, and by as much as 0.29 for one judge
+(mistral-nemo on `tie_paraphrase`: P(says "A") = 0.79, while its actual
+content-position effect on that same cell is exactly 0.000). The earlier design
+could not tell these apart — position and label were perfectly confounded, and
+the caveat box below named "label asymmetry" as a possibility without a way to
+test it. This run tests it: what looked like an order effect was, substantially,
+the judge's opinion of the *letter*, not the *slot*.
 
 The point verdict survives saturation; the distribution — what a QQ-style
 structural test or a confidence interval needs — does not.
@@ -112,12 +131,18 @@ structural test or a confidence interval needs — does not.
 > **The practical consequence — an identifiability gate.** Interpret an
 > order-effect statistic only if the output distribution clears a dispersion
 > floor: token entropy above a threshold, top-token probability below one, or an
-> effective support size `N_eff = 1 / Σ pᵢ² > N_min`. A large measured "order
-> effect" under low identifiability is not the same as one under high
-> identifiability, and should not be reported as though it were. A confident bias
-> score from a saturated judge is **non-identifying**, not necessarily a real
+> effective support size `N_eff = 1 / Σ pᵢ² > N_min` are three equivalent ways to
+> state the same floor (`experiment_llm_judge_saturation.py` implements the
+> top-token-probability form; the numbers above are gated on that one). A large
+> measured "order effect" under low identifiability is not the same as one under
+> high identifiability, and should not be reported as though it were. A confident
+> bias score from a saturated judge is **non-identifying**, not necessarily a real
 > effect — it is consistent with genuine strong preference, label asymmetry,
-> prompt-induced determinism, or simply insufficient resolution.
+> prompt-induced determinism, or simply insufficient resolution. The gate itself
+> also needs calibration: with finite `k`, a point estimate of top-token
+> probability crossing 0.9 is not the same as being confidently above 0.9 — the
+> implementation tests that with an exact one-sided binomial test rather than a
+> bare threshold comparison, for exactly the reason the paragraph above needs it.
 
 ## A bound on how far framing can move a decision
 
@@ -142,11 +167,13 @@ the surface.
 
 ## The through-line
 
-The common object is not saturation itself but **loss of commutativity under a
-state-dependent transformation**, together with a separate **loss of
-distinguishability at the observation**. In the clamped accumulator, a boundary
-creates the state dependence. In the projective model, non-commuting measurements
-create it directly. In an LLM audit, output saturation does something else
+The common object is not saturation itself but **loss of commutativity** —
+whether from non-commuting linear operators or from an additive update whose
+effective increment becomes state-dependent — together with a separate **loss
+of distinguishability at the observation**. In the clamped accumulator, a
+boundary creates the state dependence. In the projective model, non-commuting
+measurements create it directly, with no state-dependent increment involved at
+all. In an LLM audit, output saturation does something else
 entirely: it collapses distinguishable states into nearly identical observables,
 making any order effect hard to *identify*. Three cases, one geometry of state /
 transformation / observability — not a single physical mechanism.
@@ -172,6 +199,19 @@ be re-audited). The episode is this note's own argument demonstrated on its
 author: absent a dispersion-and-significance gate, a confident-looking bias
 number was an artifact.
 
+A second, subtler version of the same lesson showed up one round later. The
+saturation *gate* itself was a bare `top_prob >= 0.9` point-estimate comparison
+— exactly the kind of ungated threshold this note argues against for order
+effects, just applied one level up, to the measurement of saturation instead of
+the measurement of order. And position and label were confounded (the
+first-presented answer was always labeled "A"), so a judge that flips on a tie
+could be following spatial position or a raw token prior for "A"/"B" —
+indistinguishable. Both are fixed here too (an exact one-sided binomial test
+against the threshold; a fully crossed position × label design), and the fix
+changed the finding, not just the precision: the "order effect" the first run
+reported was substantially a label preference, not a position preference — see
+above.
+
 If you take one thing away:
 
 > **Gate your order-effect statistics on identifiability. A bias number from a
@@ -189,15 +229,22 @@ Everything needed to check the claims above.
 | `python/experiment_llm_judge_saturation.py` | The dispersion/order-effect measurement across judges (OpenRouter). |
 | `python/qq_cbd.py` | QQ equality, order-sensitivity, and the cyclic-system CbD functional. |
 | `python/test_qq_cbd.py` | Unit tests for the above, against distributions with known structure (`pytest python/`). |
-| `results/` | Raw JSON from the run reported above (16/18 cells near-deterministic). |
+| `results/` | Raw JSON from the run reported above (14/18 cells fail the two-sided gate; 0/18 order effects distinguishable from noise). |
 
-**Reproduce the measurement** (~$0.03):
+**Reproduce the measurement** (~$0.03 at `--k 12`, ~$0.21 at the `--k 40` used above):
 
 ```bash
 pip install -r python/requirements.txt
 export OPENROUTER_API_KEY=...
 python python/experiment_llm_judge_saturation.py --k 12
 ```
+
+`--k 12` is cheap but underpowered for the saturation gate itself: at that k, a
+judge whose true majority probability is genuinely 0.85 (clearly dispersed)
+still crosses a naive `top_prob >= 0.9` line from sampling noise alone a real
+fraction of the time — which is exactly why the gate here is an exact binomial
+test, not a point-estimate comparison (see above). Use `--k 40` to reproduce the
+numbers quoted in this README.
 
 **Check the proofs:**
 
