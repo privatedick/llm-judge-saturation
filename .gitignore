@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.lake/
+lean/.lake/
+.env
