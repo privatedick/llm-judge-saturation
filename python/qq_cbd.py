@@ -4,7 +4,7 @@ Contextuality-by-Default (CbD).
 All functions are pure and operate on already-estimated distributions, so they
 are unit-testable against synthetic distributions with known structure — no LLM
 API call is required to validate the math. The population layer that *produces*
-these distributions lives in ``population_runner``.
+these distributions is the caller's concern.
 
 Conventions
 -----------
@@ -155,6 +155,11 @@ def cbd_cyclic(bunch_expectations: list[float],
         raise ValueError("cyclic system needs rank n>=2")
     if (np.abs(corr) > 1 + 1e-9).any():
         raise ValueError("bunch expectations must lie in [-1, 1]")
+    if len(marginal_mismatches) != n:
+        raise ValueError(
+            f"a rank-{n} cyclic system needs {n} marginal mismatches, "
+            f"got {len(marginal_mismatches)}"
+        )
     di = float(np.sum(np.abs(marginal_mismatches)))
     so = s_odd(corr)
     cnt = so - (n - 2) - di

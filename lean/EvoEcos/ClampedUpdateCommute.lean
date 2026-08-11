@@ -6,17 +6,17 @@ Clamped-Update Order-Independence
 
 The quantum-cognition analogue of a non-commuting pair of measurement projectors
 `[P_A, P_B] ≠ 0` has an exact, mundane counterpart inside EvoEcos: a *clamped
-additive update*. `MetaLearningLayer` moves `hypothesis_quality_threshold` by
-`± learning_rate` clamped to `[0.1, 1.0]`; `ModelingLayer.ingest_peer_belief`
-nudges `uncertainty_level` by a delta clamped to `[0, 1]`.
+additive update*: any quality/confidence threshold moved by `± learning_rate`
+and clamped to a band such as `[0.1, 1.0]`, or a belief nudged by a bounded
+delta and clamped to `[0, 1]`.
 
-This module makes the E3 experiment's central claim a theorem:
+This module makes that claim a theorem:
 
-* `interior_commute` — while the running value stays strictly inside the clamp
-  band (no saturation), two clamped additive updates COMMUTE, so the final
-  belief is order-independent. This is the SOUND direction measured empirically
-  in `experiment_quantum_cognition_order` (property `interior_commute_holds`,
-  100% across seeds).
+* `interior_commute` — if each individual step keeps the value inside the clamp
+  band, two clamped additive updates COMMUTE, so the final belief is
+  order-independent. (Their *sum* may still saturate; both orders then land on
+  the same clamped value.) This is the SOUND direction, and it holds in 100% of
+  randomised trajectories tested empirically.
 
 * `saturation_breaks_commute` — a concrete witness that once a clamp boundary is
   reached the updates need NOT commute: order-dependence is possible. This is
@@ -49,9 +49,15 @@ theorem clamp_eq_self {lo hi y : ℝ} (h1 : lo ≤ y) (h2 : y ≤ hi) :
   unfold clamp
   rw [min_eq_right h2, max_eq_right h1]
 
-/-- **Sound direction.** If both single steps and the combined step stay inside
-the band (no clamp is active), the two clamped updates commute — the final
-belief is independent of the order in which the two pieces of evidence arrive. -/
+/-- **Sound direction.** If each single step from `x` stays inside the band, the
+two clamped updates commute — the final belief is independent of the order in
+which the two pieces of evidence arrive.
+
+Note the hypotheses are only about the *individual* steps `x + a` and `x + b`.
+The combined value `x + a + b` may well saturate: both orders then reduce to the
+same `clamp (x + a + b)`, so commutation still holds. Informally: *if each piece
+of evidence alone keeps the belief in band, order does not matter — even if their
+sum saturates.* -/
 theorem interior_commute {lo hi x a b : ℝ}
     (hxa1 : lo ≤ x + a) (hxa2 : x + a ≤ hi)
     (hxb1 : lo ≤ x + b) (hxb2 : x + b ≤ hi) :

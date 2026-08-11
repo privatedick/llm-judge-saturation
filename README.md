@@ -60,8 +60,11 @@ i.e. `x ↦ clamp(x + δ)`. The clamp is nonlinear, so composition becomes
 state-dependent, and that is exactly what non-commutation needs.
 
 The precise lemma (Lean, `interior_commute`, 0 sorry): two clamped increments
-commute whenever the trajectory stays strictly inside `[lo, hi]`. Contrapositive:
-if two orders disagree, **some intermediate state reached a boundary**. Boundary
+commute whenever *each single step* keeps the value inside `[lo, hi]` — their
+**sum may still saturate**, and both orders then land on the same clamped value.
+Informally: if each piece of evidence alone keeps the belief in band, order does
+not matter even if the total does not fit. Contrapositive: if two orders
+disagree, **some single step left the band**. Boundary
 contact is *necessary* for non-commutation — but not *sufficient*: same-sign
 increments that all saturate to the same bound stay order-independent despite
 hitting it (start `0.9`, `+0.2` then `−0.2` → `0.8`; the other order → `0.9`, but
@@ -86,17 +89,25 @@ the observation. Both reduce distinguishability, which is why they share a name 
 but one creates an effect and the other hides it.
 
 To put numbers on it, I ran three open judges (deepseek-v4-flash, qwen3-8b,
-mistral-nemo) on six pairwise items, both orders, 12 samples each (via
-OpenRouter, ~$0.03). **16 of 18 (model, item) cells were near-deterministic** —
-mean effective support `N_eff ≈ 1.08`, where a two-outcome distribution allows up
-to 2. On the four clear-winner items every judge saturated onto the *correct*
-answer with zero order effect — benign. On the two content-ties, most judges
-stayed saturated but onto a deterministic *position* rule: one flipped its verdict
-with order on **83% of samples while showing `N_eff = 1`** — a strong position
-bias with no distributional spread at all. Only 2 of 18 cells were dispersed
-enough to carry error bars, and there the order effect was small (~0.08). The
-point verdict survives saturation; the distribution — what a QQ-style structural
-test or a confidence interval needs — does not.
+mistral-nemo) on six pairwise items, both orders, 40 samples per order (via
+OpenRouter, ~$0.11). **29 of 36 order-conditioned distributions were
+near-deterministic** — top verdict probability ≥ 0.9, mean effective support
+`N_eff ≈ 1.17` where two outcomes allow up to 2. On the four items with a clearly
+better answer, every judge collapses onto the correct one: benign saturation.
+
+The order effects concentrate entirely on the two content-ties. Three of eighteen
+cells show an effect surviving Holm-Bonferroni correction (Fisher exact,
+p = 0.0007–0.0019, magnitude 0.25–0.33), and **all three are
+dispersion-asymmetric**: one presentation order leaves the judge genuinely
+uncertain (`N_eff` 1.6–2.0) while the other collapses it to near-determinism
+(`N_eff` 1.0–1.2). The two cells where *both* orders are dispersed show no
+significant effect at all (p = 0.65, 0.78). So the order effect here is not a
+uniform slot preference — the mean slot-A rate on ties is 0.47, i.e. no global
+position bias — but an asymmetry in *how certain* the judge becomes depending on
+presentation order. A single reported "position-bias %" hides that entirely.
+
+The point verdict survives saturation; the distribution — what a QQ-style
+structural test or a confidence interval needs — does not.
 
 > **The practical consequence — an identifiability gate.** Interpret an
 > order-effect statistic only if the output distribution clears a dispersion
@@ -145,11 +156,23 @@ transformation / observability — not a single physical mechanism.
 The validation here is synthetic and the bounds are for a 2-D projective model;
 the "quantum" is a modeling vocabulary, not a claim about the physics in your
 GPU. This is a conceptual separation plus a few proved bounds — not a product,
-not a judge-fixing tool. The saturation numbers above are a small pilot (three
+not a judge-fixing tool. The saturation numbers above are a small study (three
 models, six items) — enough to show the effect is real and common, not enough to
 be representative; a proper study would sweep more judges, items, and a standard
 preference set. And one analytic check remains open: whether boundary proximity
-actually raises the commutator in the toy dynamics. If you take one thing away:
+actually raises the commutator in the toy dynamics. An earlier version of this measurement reported something far more dramatic: a
+judge flipping its verdict with order on 83% of samples. **It did not replicate.**
+Two things were wrong. The verdict parser uppercased the text before matching
+`\b([AB])\b`, so the English article "a" could match as a verdict of *A* —
+biasing toward the slot-A answer, which is to say manufacturing the very effect
+being measured. And at k=12 a difference of one sample looks like an effect.
+Both are fixed here (case-sensitive parsing; per-cell Fisher exact with
+Holm-Bonferroni; raw per-sample verdicts persisted in `results/` so the parse can
+be re-audited). The episode is this note's own argument demonstrated on its
+author: absent a dispersion-and-significance gate, a confident-looking bias
+number was an artifact.
+
+If you take one thing away:
 
 > **Gate your order-effect statistics on identifiability. A bias number from a
 > saturated judge measures the interface, not the judge.**
@@ -165,6 +188,7 @@ Everything needed to check the claims above.
 | `lean/EvoEcos/PersuasionOperator.lean` | `power_eq`, `power_le_abs_sin` (the `\|sin θ\|` bound), `power_tight`. 0 sorry / 0 axiom. |
 | `python/experiment_llm_judge_saturation.py` | The dispersion/order-effect measurement across judges (OpenRouter). |
 | `python/qq_cbd.py` | QQ equality, order-sensitivity, and the cyclic-system CbD functional. |
+| `python/test_qq_cbd.py` | Unit tests for the above, against distributions with known structure (`pytest python/`). |
 | `results/` | Raw JSON from the run reported above (16/18 cells near-deterministic). |
 
 **Reproduce the measurement** (~$0.03):
@@ -175,8 +199,15 @@ export OPENROUTER_API_KEY=...
 python python/experiment_llm_judge_saturation.py --k 12
 ```
 
-**Check the proofs:** `cd lean && lake exe cache get && lake build` (Lean 4.29.1 + Mathlib;
-`grep -rc sorry EvoEcos/` should be 0).
+**Check the proofs:**
+
+```bash
+cd lean && lake exe cache get && lake build
+```
+
+Lean 4.29.1 + Mathlib, pinned in `lake-manifest.json`. A clean build emitting no
+`declaration uses 'sorry'` warning is the actual check — note that grepping for
+the string "sorry" matches the header comments, so it is not a useful test.
 
 ---
 

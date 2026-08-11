@@ -1,10 +1,9 @@
 """Empirical: output saturation and the identifiability gate in real LLM judges.
 
-Supports the "Two kinds of saturation" note (docs/action/) with real data via
-OpenRouter. Tests the measurement-saturation hypothesis (H2): real LLM judges are
-frequently near-deterministic on pairwise verdicts, and where they are, the
-verdict distribution is degenerate — so an order-effect statistic computed on it
-is non-identifying, exactly the Kang (2026) saturation caveat.
+Tests the measurement-saturation hypothesis with real data via OpenRouter: LLM
+judges are frequently near-deterministic on pairwise verdicts, and where they
+are, the verdict distribution is degenerate — so an order-effect statistic
+computed on it is non-identifying (the Kang 2026 saturation caveat).
 
 Design (per model x item):
   - A pairwise-preference judgment: question + two candidate answers, "reply A or
@@ -34,6 +33,7 @@ import re
 import time
 from collections import Counter
 from datetime import date
+from math import comb
 from pathlib import Path
 
 import numpy as np
@@ -90,14 +90,24 @@ def _judge_messages(question: str, slot_a: str, slot_b: str) -> list[dict]:
             {"role": "user", "content": user}]
 
 
+# CASE-SENSITIVE on purpose. An earlier version uppercased the text first, which
+# made the English article "a" match \b([AB])\b — so "I think a good choice is B"
+# parsed as A. Because position bias is measured as slot-A preference, that bug
+# could manufacture the very effect being measured. Lowercase "a" must never match.
+_VERDICT_RE = re.compile(r"\b([AB])\b")
+
+
 def _parse_verdict(content: str) -> str | None:
+    """Parse an 'A'/'B' verdict. Returns None rather than guessing."""
     if not content:
         return None
-    m = re.search(r"\b([AB])\b", content.strip().upper())
-    if m:
-        return m.group(1)
-    c = content.strip().upper()
-    return c[0] if c and c[0] in "AB" else None
+    s = content.strip()
+    if s.upper() in ("A", "B"):          # the requested format
+        return s.upper()
+    if s[0] in "AB" and (len(s) == 1 or not s[1].isalpha()):
+        return s[0]                       # "B." / "B is better"
+    m = _VERDICT_RE.search(s)             # "Answer A is correct"
+    return m.group(1) if m else None
 
 
 def _call(model: str, messages: list[dict], temperature: float, timeout: int = 90,
@@ -118,22 +128,64 @@ def _call(model: str, messages: list[dict], temperature: float, timeout: int = 9
             msg = data["choices"][0]["message"]
             content = (msg.get("content") or "").strip()
             verdict = _parse_verdict(content)
+            via_reasoning = False
             if verdict is None:
-                # reasoning-model fallback: take the LAST A/B in the reasoning trace
-                reasoning = (msg.get("reasoning") or "")
-                hits = re.findall(r"\b([AB])\b", reasoning.upper())
+                # Reasoning-model fallback: the verdict concludes the trace, so
+                # take the LAST match — but case-sensitively (see _VERDICT_RE).
+                reasoning = msg.get("reasoning") or ""
+                hits = _VERDICT_RE.findall(reasoning)
                 verdict = hits[-1] if hits else None
+                via_reasoning = verdict is not None
             return verdict, {
                 "prompt_tokens": usage.get("prompt_tokens", 0),
                 "completion_tokens": usage.get("completion_tokens", 0),
+                "via_reasoning": via_reasoning,
             }
         except (requests.RequestException, KeyError, IndexError, ValueError):
             if attempt < max_retries - 1:
-                # exponential backoff with jitter (global CLAUDE.md mandate)
+                # exponential backoff with jitter
                 time.sleep((2 ** attempt) * 0.5 + random.random() * 0.3)
                 continue
-            return None, {"prompt_tokens": 0, "completion_tokens": 0}
-    return None, {"prompt_tokens": 0, "completion_tokens": 0}
+            return None, {"prompt_tokens": 0, "completion_tokens": 0, "via_reasoning": False}
+    return None, {"prompt_tokens": 0, "completion_tokens": 0, "via_reasoning": False}
+
+
+def _fisher_exact_2x2(a: int, b: int, c: int, d: int) -> float:
+    """Two-sided Fisher exact p for [[a,b],[c,d]] (no scipy dependency).
+
+    Sums the hypergeometric probabilities of all tables at least as extreme as
+    the observed one, conditioning on the margins.
+    """
+    n = a + b + c + d
+    if n == 0:
+        return 1.0
+    r1, c1 = a + b, a + c
+
+    def _p(x: int) -> float:
+        return (comb(r1, x) * comb(n - r1, c1 - x)) / comb(n, c1)
+
+    p_obs = _p(a)
+    lo, hi = max(0, c1 - (n - r1)), min(r1, c1)
+    total = sum(_p(x) for x in range(lo, hi + 1) if _p(x) <= p_obs + 1e-12)
+    return float(min(1.0, total))
+
+
+def _holm_significant(pvals: list[float], alpha: float = 0.05) -> int:
+    """Number of hypotheses surviving Holm-Bonferroni at ``alpha``.
+
+    Testing 18 cells at a nominal 0.05 makes ~1 false positive the expected
+    outcome, so the corrected count is the one worth quoting.
+    """
+    m = len(pvals)
+    if m == 0:
+        return 0
+    k = 0
+    for i, p in enumerate(sorted(pvals)):
+        if p <= alpha / (m - i):
+            k += 1
+        else:
+            break
+    return k
 
 
 def _dist_stats(verdicts: list[str]) -> dict:
@@ -178,15 +230,33 @@ def _run_cell(model: str, item: dict, k: int, temperature: float) -> dict:
     slotA = ([s12["p_A"]] if s12["p_A"] is not None else []) + \
             ([s21["p_A"]] if s21["p_A"] is not None else [])
     position_bias = (float(np.mean(slotA)) if slotA else None)
-    min_top_prob = max(s12["top_prob"], s21["top_prob"])   # most-saturated order
-    min_entropy = min(s12["entropy_bits"], s21["entropy_bits"])
-    min_n_eff = min(s12["n_eff"], s21["n_eff"])
+
+    # NAMING: these summarise the WORST (most saturated) order — a cell passes the
+    # two-sided gate only if BOTH orders are dispersed. An earlier version called
+    # the max() of top_prob "min_top_prob", which read as its opposite.
+    worst_top_prob = max(s12["top_prob"], s21["top_prob"])
+    worst_entropy = min(s12["entropy_bits"], s21["entropy_bits"])
+    worst_n_eff = min(s12["n_eff"], s21["n_eff"])
+
+    # Is the order effect distinguishable from zero at this k? (Fisher exact on
+    # chose-ans1 counts across the two orders.) k=12/order gives SE~0.14 at p=.5,
+    # so small effects are one sample and must not be reported as magnitudes.
+    a1 = sum(1 for v in verd12 if v == "A")          # order12: A == chose ans1
+    b1 = sum(1 for v in verd21 if v == "B")          # order21: B == chose ans1
+    p_value = _fisher_exact_2x2(a1, s12["n"] - a1, b1, s21["n"] - b1)
+
     return {
         "model": model, "item": item["id"], "better": item["better"],
         "order12": s12, "order21": s21,
-        "order_effect": order_effect, "position_bias": position_bias,
-        "min_top_prob": min_top_prob, "min_entropy_bits": min_entropy,
-        "min_n_eff": min_n_eff, "usage": usage,
+        "order_effect": order_effect, "order_effect_fisher_p": p_value,
+        "position_bias": position_bias,
+        "worst_order_top_prob": worst_top_prob,
+        "worst_order_entropy_bits": worst_entropy,
+        "worst_order_n_eff": worst_n_eff,
+        # raw per-sample verdicts so a reader can audit parsing/verdicts directly
+        "raw_verdicts": {"order12": verd12, "order21": verd21},
+        "n_via_reasoning_fallback": sum(u.get("via_reasoning", False) for _, u in v12 + v21),
+        "usage": usage,
     }
 
 
@@ -220,9 +290,19 @@ def main() -> dict:
     )
 
     valid = [c for c in cells if c["order_effect"] is not None]
-    n_sat = sum(1 for c in valid if c["min_top_prob"] >= args.sat_top_prob)
-    # among gated-interpretable (dispersed) cells, is the order effect real?
-    interp = [c for c in valid if c["min_top_prob"] < args.sat_top_prob]
+    # CELL level: a cell fails the two-sided gate if EITHER order is saturated.
+    n_sat = sum(1 for c in valid if c["worst_order_top_prob"] >= args.sat_top_prob)
+    interp = [c for c in valid if c["worst_order_top_prob"] < args.sat_top_prob]
+    # ORDER level: the unconflated count — how many individual distributions are
+    # saturated. Reporting only the cell number overstates "near-determinism",
+    # because a cell can contain one maximally-dispersed order.
+    orders = [s for c in valid for s in (c["order12"], c["order21"])]
+    n_orders_sat = sum(1 for s in orders if s["top_prob"] >= args.sat_top_prob)
+    # Significance: how many order effects are distinguishable from zero at this k.
+    # RAW is nominal-only — with 18 cells, one hit at p~0.04 is what chance gives,
+    # so Holm-Bonferroni is the number that should be quoted.
+    n_sig = sum(1 for c in valid if (c["order_effect_fisher_p"] or 1.0) < 0.05)
+    n_sig_holm = _holm_significant([c["order_effect_fisher_p"] or 1.0 for c in valid])
     ties = [c for c in valid if c["better"] == "tie" and c["position_bias"] is not None]
     tie_slotA = [c["position_bias"] for c in ties]
     result = {
@@ -233,25 +313,35 @@ def main() -> dict:
         "cells": cells,
         "summary": {
             "n_cells": len(valid),
-            "n_saturated": n_sat,
-            "frac_saturated": (n_sat / len(valid)) if valid else 0.0,
+            "n_cells_failing_two_sided_gate": n_sat,
+            "frac_cells_failing_two_sided_gate": (n_sat / len(valid)) if valid else 0.0,
+            "n_orders": len(orders),
+            "n_orders_saturated": n_orders_sat,
+            "frac_orders_saturated": (n_orders_sat / len(orders)) if orders else 0.0,
             "n_interpretable": len(interp),
+            "n_order_effects_significant_p05_raw": n_sig,
+            "n_order_effects_significant_holm": n_sig_holm,
             "mean_order_effect_all": float(np.mean([c["order_effect"] for c in valid])) if valid else 0.0,
             "mean_order_effect_interpretable": float(np.mean([c["order_effect"] for c in interp])) if interp else None,
-            "mean_min_n_eff": float(np.mean([c["min_n_eff"] for c in valid])) if valid else None,
+            "mean_worst_order_n_eff": float(np.mean([c["worst_order_n_eff"] for c in valid])) if valid else None,
+            "mean_order_level_n_eff": float(np.mean([s["n_eff"] for s in orders])) if orders else None,
             "mean_slotA_pref_tie_items": float(np.mean(tie_slotA)) if tie_slotA else None,
             "estimated_cost_usd": round(_price(cells), 4),
             "conclusion": (
                 "Real LLM judges are frequently near-deterministic on pairwise "
-                "verdicts (frac_saturated; mean_min_n_eff near 1). On a saturated "
-                "cell you still get a point verdict, but the verdict DISTRIBUTION is "
-                "degenerate — no variance, no error bars, and the QQ-style "
-                "structural discriminant is non-identifying (Kang 2026's saturation "
-                "caveat). Position bias itself stays visible (mean_slotA_pref_tie: "
-                "deviation from 0.5 on content-neutral 'tie' items); saturation and "
-                "position bias are separable. Practical upshot: report dispersion "
-                "alongside any order/position statistic — a point estimate from a "
-                "saturated judge carries no distributional information."
+                "verdicts. Reported at TWO levels because they differ: "
+                "frac_orders_saturated counts individual distributions; "
+                "frac_cells_failing_two_sided_gate counts (model,item) cells where "
+                "EITHER order is saturated (the conservative gate for interpreting "
+                "an order statistic, but a weaker claim about determinism — a "
+                "failing cell can contain one maximally-dispersed order). On a "
+                "saturated distribution you still get a point verdict, but no "
+                "variance and no error bars, so the QQ-style structural "
+                "discriminant is non-identifying (Kang 2026's saturation caveat). "
+                "Position bias stays visible (mean_slotA_pref_tie_items); "
+                "saturation and position bias are separable. Order effects are "
+                "reported with Fisher exact p per cell — at this k a difference of "
+                "one sample is not a measured magnitude."
             ),
         },
     }
@@ -261,8 +351,11 @@ def main() -> dict:
     out_path = out_dir / f"experiment_llm_judge_saturation_{tag}{date.today().strftime('%Y%m%d')}.json"
     out_path.write_text(json.dumps(result, indent=2) + "\n")
     s = result["summary"]
-    print(f"[llm_judge_saturation] cells={s['n_cells']} saturated={s['n_saturated']} "
-          f"({s['frac_saturated']:.0%}) mean_order_effect={s['mean_order_effect_all']:.3f} "
+    print(f"[llm_judge_saturation] cells={s['n_cells']} "
+          f"orders_saturated={s['n_orders_saturated']}/{s['n_orders']} "
+          f"cells_failing_gate={s['n_cells_failing_two_sided_gate']}/{s['n_cells']} "
+          f"sig_raw={s['n_order_effects_significant_p05_raw']} "
+          f"sig_holm={s['n_order_effects_significant_holm']} "
           f"cost=${s['estimated_cost_usd']} wrote {out_path.name}")
     return result
 
