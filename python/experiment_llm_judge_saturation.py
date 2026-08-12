@@ -56,6 +56,7 @@ import random
 import re
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import date
 from math import comb
 from pathlib import Path
@@ -168,8 +169,41 @@ def _parse_verdict(content: str) -> str | None:
     return hits[-1] if hits else None
 
 
+# Round-5 hardening (2026-08-12): a plain `requests.post(..., timeout=N)` hung
+# for 10+ minutes THREE separate times this project (round 3's --jobs 6 run,
+# both temperature-sweep attempts) despite timeout=90. `requests`' timeout is
+# a per-read/connect inactivity timer, not a total wall-clock deadline -- if
+# the server (or an intermediary) trickles occasional keep-alive bytes during
+# a long generation, each individual read completes inside the timeout window
+# and the clock never actually expires, even though the CALL as a whole runs
+# far longer than intended. Wrapping the blocking call in a future with a hard
+# `.result(timeout=...)` enforces a real wall-clock cap regardless of what the
+# underlying socket is doing. The abandoned thread isn't forcibly killed
+# (Python can't do that) -- it keeps running until its own per-read timeout
+# eventually fires on its own, but the caller stops waiting and retries.
+# Verified against a real hanging server, not just "looks right": see
+# test_llm_judge_saturation_hardening.py::test_hard_deadline_actually_cuts_off_a_hung_request.
+_HANG_GUARD_POOL = ThreadPoolExecutor(max_workers=64, thread_name_prefix="openrouter-call")
+
+
+def _post_with_hard_deadline(url: str, headers: dict, payload: dict,
+                              per_read_timeout: int, hard_deadline: float):
+    future = _HANG_GUARD_POOL.submit(
+        requests.post, url, headers=headers, json=payload, timeout=per_read_timeout
+    )
+    try:
+        return future.result(timeout=hard_deadline)
+    except FutureTimeoutError as e:
+        raise requests.RequestException(
+            f"hard wall-clock deadline ({hard_deadline}s) exceeded "
+            f"(per-read timeout was {per_read_timeout}s -- the connection was "
+            f"likely kept alive by trickling bytes past that)"
+        ) from e
+
+
 def _call(model: str, messages: list[dict], temperature: float, timeout: int = 90,
-          max_retries: int = 4, max_tokens: int = 1024) -> tuple[str | None, dict]:
+          max_retries: int = 4, max_tokens: int = 1024,
+          hard_deadline: float = 120.0) -> tuple[str | None, dict]:
     # max_tokens is generous because some judges are reasoning models that spend
     # the budget thinking before emitting the verdict; too small a cap truncates
     # them (finish_reason='length', empty content) and looks like a failure.
@@ -177,7 +211,8 @@ def _call(model: str, messages: list[dict], temperature: float, timeout: int = 9
                "max_tokens": max_tokens}
     for attempt in range(max_retries):
         try:
-            r = requests.post(OPENROUTER_URL, headers=_headers(), json=payload, timeout=timeout)
+            r = _post_with_hard_deadline(OPENROUTER_URL, _headers(), payload,
+                                          per_read_timeout=timeout, hard_deadline=hard_deadline)
             if r.status_code == 429 or r.status_code >= 500:
                 raise requests.RequestException(f"retryable {r.status_code}")
             r.raise_for_status()
