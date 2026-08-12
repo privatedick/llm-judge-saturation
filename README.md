@@ -289,6 +289,7 @@ Everything needed to check the claims above.
 | `python/pyproject.toml` | `pip install -e python/` for a real package instead of a script. |
 | `.github/workflows/ci.yml` | Runs the Python tests and the Lean build (0 sorry / 0 axiom check) on every push. |
 | `results/` | Raw JSON from all runs reported above (14/18 cells fail the two-sided gate in both independent 3-model runs; 0/18 order effects survive Holm-Bonferroni in both; the `openai/gpt-5-mini` frontier-coverage addendum). |
+| `poc/poc_llm_judge_saturation.py` | Standalone, offline (no API key) demo of the position×label decomposition and calibrated gate against synthetic judges — a faster way to see the method work than reading the prose. Read its own docstring before citing the cost numbers: those model a sampling strategy this repo doesn't implement yet. |
 | `CITATION.cff` | Machine-readable citation metadata. |
 
 **Reproduce the measurement** (~$0.03 at `--k 12`, ~$0.21 at the `--k 40` used above):
