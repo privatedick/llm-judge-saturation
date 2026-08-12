@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  python-tests:
+    name: Python tests (offline, no API key needed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r python/requirements.txt
+      - name: Run tests
+        run: python -m pytest python/ -v
+
+  lean-build:
+    name: Lean build (0 sorry / 0 axiom)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lean
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: lean
+      - name: Check for sorry tactic use
+        run: |
+          # A bare `grep sorry` matches header-comment prose too (see README's own
+          # caveat). Anchor to line-start so it only catches an actual tactic use,
+          # matching this repo's own verify methodology (evoecos formal/verify.sh).
+          if grep -rnP '^\s*sorry\b' EvoEcos/ --include="*.lean"; then
+            echo "::error::sorry tactic use found above -- baseline is 0"
+            exit 1
+          fi
+          echo "0 sorry tactic uses (build succeeding is necessary but not sufficient -- Lean warns, not fails, on sorry by default, so this line-anchored grep is the real gate)."

@@ -377,32 +377,18 @@ def _price(cells: list[dict]) -> float:
     return it / 1e6 * 0.2 + ot / 1e6 * 0.4
 
 
-def main() -> dict:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--k", type=int, default=15, help="samples per (model,item,condition)")
-    ap.add_argument("--temperature", type=float, default=1.0)
-    ap.add_argument("--jobs", type=int, default=2, help="parallel API threads")
-    ap.add_argument("--sat-top-prob", type=float, default=0.9,
-                    help="null-hypothesis threshold for the exact saturation test")
-    ap.add_argument("--alpha", type=float, default=0.05,
-                    help="significance level for the exact saturation test")
-    ap.add_argument("--pilot", action="store_true", help="1 model, 2 items, k=6")
-    args = ap.parse_args()
+def _run_study(models: list[str], items: list[dict], k: int, temperature: float,
+                jobs: int, sat_top_prob: float, alpha: float) -> dict:
+    """One full (models x items x 4 conditions x k) study at a fixed temperature.
 
-    if not os.environ.get("OPENROUTER_API_KEY"):
-        raise SystemExit("OPENROUTER_API_KEY not set")
-
-    models = MODELS[:1] if args.pilot else MODELS
-    # Round-3 review: ITEMS[:2] (arith, hashmap) are both clear-winner items --
-    # a pilot run touched no tie item, so it validated plumbing while skipping
-    # every path the experiment exists to measure (no dispersed cell, no gate
-    # boundary, no label/position rule to disambiguate). One clear + one tie.
-    items = [ITEMS[0], ITEMS[3]] if args.pilot else ITEMS
-    k = 6 if args.pilot else args.k
-
+    Factored out of main() (UltraReview follow-up, 2026-08-12) so the same
+    study can be run at several temperatures (--temperatures) or against a
+    model/item subset (--models / --item-ids) without duplicating the
+    cells -> summary aggregation logic.
+    """
     tasks = [(m, it) for m in models for it in items]
-    cells = Parallel(n_jobs=args.jobs, prefer="threads")(
-        delayed(_run_cell)(m, it, k, args.temperature, args.sat_top_prob, args.alpha)
+    cells = Parallel(n_jobs=jobs, prefer="threads")(
+        delayed(_run_cell)(m, it, k, temperature, sat_top_prob, alpha)
         for m, it in tasks
     )
 
@@ -424,8 +410,8 @@ def main() -> dict:
         "experiment": "llm_judge_saturation",
         "date": date.today().isoformat(),
         "config": {"models": models, "n_items": len(items), "k": k,
-                   "temperature": args.temperature, "sat_top_prob": args.sat_top_prob,
-                   "alpha": args.alpha, "design": "position x label, fully crossed 2x2"},
+                   "temperature": temperature, "sat_top_prob": sat_top_prob,
+                   "alpha": alpha, "design": "position x label, fully crossed 2x2"},
         "cells": cells,
         "summary": {
             "n_cells": len(valid),
@@ -467,19 +453,92 @@ def main() -> dict:
             ),
         },
     }
-    out_dir = Path(__file__).resolve().parents[1] / "results"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    tag = "pilot_" if args.pilot else ""
-    out_path = out_dir / f"experiment_llm_judge_saturation_{tag}{date.today().strftime('%Y%m%d')}.json"
-    out_path.write_text(json.dumps(result, indent=2) + "\n")
+    return result
+
+
+def _print_study_line(tag: str, result: dict) -> None:
     s = result["summary"]
-    print(f"[llm_judge_saturation] cells={s['n_cells']} "
+    print(f"[llm_judge_saturation]{tag} cells={s['n_cells']} "
           f"conditions_saturated={s['n_conditions_saturated']}/{s['n_conditions']} "
           f"cells_failing_gate={s['n_cells_failing_two_sided_gate']}/{s['n_cells']} "
           f"sig_raw={s['n_order_effects_significant_p05_raw']} "
           f"sig_holm={s['n_order_effects_significant_holm']} "
           f"label_bias_ties={s['mean_label_bias_tie_items']} "
-          f"cost=${s['estimated_cost_usd']} wrote {out_path.name}")
+          f"cost=${s['estimated_cost_usd']}")
+
+
+def main() -> dict:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--k", type=int, default=15, help="samples per (model,item,condition)")
+    ap.add_argument("--temperature", type=float, default=1.0)
+    ap.add_argument("--temperatures", type=float, nargs="+", default=None,
+                    help="run a temperature sweep instead of a single --temperature "
+                         "(UltraReview follow-up: 'interaction between sampling "
+                         "temperature and measured saturation is not explored')")
+    ap.add_argument("--models", nargs="+", default=None,
+                    help="override the default 3-model MODELS list, e.g. to add "
+                         "a proprietary/frontier judge via OpenRouter")
+    ap.add_argument("--item-ids", nargs="+", default=None,
+                    help="run only these item ids (see ITEMS) instead of all six "
+                         "-- e.g. the two tie items, where the interesting cells "
+                         "concentrate, to keep a sweep/addendum run cheap")
+    ap.add_argument("--jobs", type=int, default=2, help="parallel API threads")
+    ap.add_argument("--sat-top-prob", type=float, default=0.9,
+                    help="null-hypothesis threshold for the exact saturation test")
+    ap.add_argument("--alpha", type=float, default=0.05,
+                    help="significance level for the exact saturation test")
+    ap.add_argument("--pilot", action="store_true", help="1 model, 2 items, k=6")
+    ap.add_argument("--tag", default="", help="filename tag, e.g. 'tempsweep_' or 'frontier_'")
+    args = ap.parse_args()
+
+    if not os.environ.get("OPENROUTER_API_KEY"):
+        raise SystemExit("OPENROUTER_API_KEY not set")
+
+    models = MODELS[:1] if args.pilot else (args.models or MODELS)
+    if args.item_ids:
+        by_id = {it["id"]: it for it in ITEMS}
+        items = [by_id[i] for i in args.item_ids]
+    # Round-3 review: ITEMS[:2] (arith, hashmap) are both clear-winner items --
+    # a pilot run touched no tie item, so it validated plumbing while skipping
+    # every path the experiment exists to measure (no dispersed cell, no gate
+    # boundary, no label/position rule to disambiguate). One clear + one tie.
+    elif args.pilot:
+        items = [ITEMS[0], ITEMS[3]]
+    else:
+        items = ITEMS
+    k = 6 if args.pilot else args.k
+
+    out_dir = Path(__file__).resolve().parents[1] / "results"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    tag = "pilot_" if args.pilot else args.tag
+
+    if args.temperatures:
+        by_temp = {}
+        for t in args.temperatures:
+            result = _run_study(models, items, k, t, args.jobs, args.sat_top_prob, args.alpha)
+            by_temp[t] = result
+            _print_study_line(f" T={t}", result)
+        combined = {
+            "experiment": "llm_judge_saturation_temperature_sweep",
+            "date": date.today().isoformat(),
+            "temperatures": args.temperatures,
+            "by_temperature": {str(t): r for t, r in by_temp.items()},
+            "saturation_vs_temperature": {
+                str(t): r["summary"]["frac_conditions_saturated"] for t, r in by_temp.items()
+            },
+            "total_cost_usd": round(sum(r["summary"]["estimated_cost_usd"] for r in by_temp.values()), 4),
+        }
+        out_path = out_dir / f"experiment_llm_judge_saturation_{tag}{date.today().strftime('%Y%m%d')}.json"
+        out_path.write_text(json.dumps(combined, indent=2) + "\n")
+        print(f"[llm_judge_saturation] temperature sweep done, "
+              f"total_cost=${combined['total_cost_usd']} wrote {out_path.name}")
+        return combined
+
+    result = _run_study(models, items, k, args.temperature, args.jobs, args.sat_top_prob, args.alpha)
+    out_path = out_dir / f"experiment_llm_judge_saturation_{tag}{date.today().strftime('%Y%m%d')}.json"
+    out_path.write_text(json.dumps(result, indent=2) + "\n")
+    _print_study_line("", result)
+    print(f"wrote {out_path.name}")
     return result
 
 

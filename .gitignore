@@ -3,3 +3,5 @@ __pycache__/
 .lake/
 lean/.lake/
 .env
+python/*.egg-info/
+python/build/

@@ -1,0 +1,25 @@
+[project]
+name = "llm-judge-saturation"
+version = "0.3.0"
+description = "QQ equality, order-sensitivity, and cyclic-system CbD for measuring LLM-judge order effects — the code behind the 'Two kinds of saturation' essay."
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24,<3",
+    "scipy>=1.10,<2",
+    "requests>=2.31,<3",
+    "joblib>=1.3,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4,<9"]
+
+[project.urls]
+Repository = "https://github.com/privatedick/llm-judge-saturation"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["qq_cbd", "experiment_llm_judge_saturation"]

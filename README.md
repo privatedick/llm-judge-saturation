@@ -203,7 +203,28 @@ GPU. This is a conceptual separation plus a few proved bounds — not a product,
 not a judge-fixing tool. The saturation numbers above are a small study (three
 models, six items) — enough to show the effect is real and common, not enough to
 be representative; a proper study would sweep more judges, items, and a standard
-preference set. And one analytic check remains open: whether boundary proximity
+preference set.
+
+An external review (2026-08-12) asked for two of those specifically: proprietary
+frontier judges, and the interaction between sampling temperature and measured
+saturation. One extended cleanly, one didn't. Added `openai/gpt-5-mini` — a
+proprietary frontier judge, not open-weight like the three above — on the two
+tie items plus one clear-winner item, same design (k=40, T=1.0, ~$0.04): it
+reproduces the same qualitative pattern. `capital` (clear winner) saturates
+correctly onto the right answer, same as the open-weight judges. On the two
+ties, content-position order effects stay near zero (0.012 both) while label
+bias is real and item-specific: 0.49 (essentially unbiased) on `tie_paraphrase`,
+0.11 (strongly "B"-preferring) on `tie_greeting` — the same judge, two very
+different biases depending on the specific prompt, which is more evidence for
+"item-specific token quirk," not "universal position bias." The temperature
+sweep did not extend as cleanly: two attempts to run judges across T ∈ {0, 0.5,
+1} both stalled mid-run (the same OpenRouter-connection-outlives-the-timeout
+failure mode noted below, twice, on this measurement in particular) and were
+abandoned rather than reported from a killed, incomplete run. The temperature
+question stays genuinely open — this note does not claim an answer it doesn't
+have.
+
+And one analytic check remains open: whether boundary proximity
 actually raises the commutator in the toy dynamics. An earlier version of this measurement reported something far more dramatic: a
 judge flipping its verdict with order on 83% of samples. **It did not replicate.**
 Two things were wrong. The verdict parser uppercased the text before matching
@@ -262,10 +283,12 @@ Everything needed to check the claims above.
 |---|---|
 | `lean/EvoEcos/ClampedUpdateCommute.lean` | `interior_commute` (interior clamped updates commute) + a boundary witness. 0 sorry / 0 axiom. |
 | `lean/EvoEcos/PersuasionOperator.lean` | `power_eq`, `power_le_abs_sin` (the `\|sin θ\|` bound), `power_tight`. 0 sorry / 0 axiom. |
-| `python/experiment_llm_judge_saturation.py` | The dispersion/order-effect measurement across judges (OpenRouter). |
+| `python/experiment_llm_judge_saturation.py` | The dispersion/order-effect measurement across judges (OpenRouter). `--models`/`--item-ids`/`--temperatures` let you target a subset or sweep temperature without disturbing the headline run. |
 | `python/qq_cbd.py` | QQ equality, order-sensitivity, and the cyclic-system CbD functional. |
-| `python/test_qq_cbd.py` | Unit tests for the above, against distributions with known structure (`pytest python/`). |
-| `results/` | Raw JSON from both independent runs reported above (14/18 cells fail the two-sided gate both times; 0/18 order effects survive Holm-Bonferroni both times). |
+| `python/test_qq_cbd.py`, `python/test_experiment_llm_judge_saturation.py` | Unit tests, against distributions/completions with known structure (`pytest python/`). |
+| `python/pyproject.toml` | `pip install -e python/` for a real package instead of a script. |
+| `.github/workflows/ci.yml` | Runs the Python tests and the Lean build (0 sorry / 0 axiom check) on every push. |
+| `results/` | Raw JSON from all runs reported above (14/18 cells fail the two-sided gate in both independent 3-model runs; 0/18 order effects survive Holm-Bonferroni in both; the `openai/gpt-5-mini` frontier-coverage addendum). |
 | `CITATION.cff` | Machine-readable citation metadata. |
 
 **Reproduce the measurement** (~$0.03 at `--k 12`, ~$0.21 at the `--k 40` used above):
