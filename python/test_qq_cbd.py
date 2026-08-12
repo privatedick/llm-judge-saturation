@@ -102,6 +102,26 @@ def test_s_odd_known_values():
     assert s_odd([1, 1, 1, -1]) == 4.0    # flip the -1 -> all positive
 
 
+def test_s_odd_empty_raises():
+    """s_odd([]) used to silently return -inf (n=0 has no odd-parity sign
+    pattern at all, so the max-over-nothing default never got overwritten)
+    instead of raising on degenerate input."""
+    with pytest.raises(ValueError):
+        s_odd([])
+
+
+def test_order_effect_o_ss_and_total_variation_can_maximally_diverge():
+    """TV of the two joints and O_SS (the marginal-shift sum) are not just
+    occasionally different -- they can hit OPPOSITE extremes on the same
+    input. Applying Kang's |q|<=O_SS with TV instead of o_ss gets the wrong
+    verdict here, not a slightly-off one."""
+    p_ab = np.array([[0.5, 0.0], [0.0, 0.5]])   # diagonal joint, [A][B]
+    p_ba = np.array([[0.0, 0.5], [0.5, 0.0]])   # anti-diagonal joint, [B][A]
+    oe = order_effect(p_ab, p_ba)
+    assert oe["total_variation"] == pytest.approx(1.0)
+    assert oe["o_ss"] == pytest.approx(0.0)
+
+
 def test_pr_box_is_contextual_and_hits_algebraic_max():
     res = cbd_cyclic([1, 1, 1, -1], [0, 0, 0, 0])
     assert res.contextual is True

@@ -70,7 +70,13 @@ The precise lemma (Lean, `interior_commute`, 0 sorry): two clamped increments
 commute whenever *each single step* keeps the value inside `[lo, hi]` — their
 **sum may still saturate**, and both orders then land on the same clamped value.
 Informally: if each piece of evidence alone keeps the belief in band, order does
-not matter even if the total does not fit. Contrapositive: if two orders
+not matter even if the total does not fit — and this isn't a rare edge case:
+sampling random `(x, a, b)` triples where each single step lands in-band,
+roughly a third to a tenth of them (the exact fraction is a property of the
+sampling distribution, not of the theorem — checked independently at both
+ends) have the *combined* step `x+a+b` land outside `[lo, hi]` anyway, with
+commutation holding regardless every time, as the proof guarantees.
+Contrapositive: if two orders
 disagree, **some single step left the band**. Boundary
 contact is *necessary* for non-commutation — but not *sufficient*: same-sign
 increments that all saturate to the same bound stay order-independent despite
@@ -99,31 +105,42 @@ To put numbers on it, I ran three open judges (deepseek-v4-flash, qwen3-8b,
 mistral-nemo) on six pairwise items, a fully crossed content-**position** ×
 **label-assignment** design (four conditions per item — decoupling *where* an
 answer sits from *which letter* it is called; see "Honest limits" below for why
-that matters), 40 samples per condition (via OpenRouter, ~$0.21). Saturation is
+that matters), 40 samples per condition **at temperature 1.0** — full sampling
+temperature, not the T→0 regime where saturation would be a trivial artifact of
+the setup rather than a finding about the judge (via OpenRouter, ~$0.21). Saturation is
 flagged by an exact one-sided binomial test against the 0.9 floor, not a bare
 point-estimate comparison — the gate box below explains why the raw comparison
-over-flags. **46 of 72 (position, label) distributions were confidently
+over-flags. **49 of 72 (position, label) distributions were confidently
 saturated**, 14 of 18 cells fail the two-sided gate (any of their 4 conditions
-saturated), mean effective support `N_eff ≈ 1.21`. On the four items with a
+saturated), mean effective support `N_eff ≈ 1.20`. On the four items with a
 clearly better answer, every judge collapses onto the correct one: benign
 saturation.
 
 Decoupling position from label changes the *finding*, not just the numbers.
-**Zero of eighteen cells show a content-position order effect distinguishable
-from noise** — even uncorrected, every Fisher-exact p on the two tie items is
-≥ 0.20; once label is counterbalanced, genuine position-driven order effects are
-small (mean 0.046 on ties) and don't survive at this k. What *is* large is a
-pure **label/token preference**, measurable for the first time because the
-design separates it: on tie items, the judge's raw rate of answering "A" —
-pooled across content and position, so "A" is attached to each answer and each
-slot equally often — deviates from the unbiased 0.5 by a mean of 0.140, three
-times the size of the position effect, and by as much as 0.29 for one judge
-(mistral-nemo on `tie_paraphrase`: P(says "A") = 0.79, while its actual
-content-position effect on that same cell is exactly 0.000). The earlier design
-could not tell these apart — position and label were perfectly confounded, and
-the caveat box below named "label asymmetry" as a possibility without a way to
-test it. This run tests it: what looked like an order effect was, substantially,
-the judge's opinion of the *letter*, not the *slot*.
+**Zero of eighteen cells show a content-position order effect surviving
+Holm-Bonferroni correction** — genuine position-driven order effects are small
+(mean 0.058 on ties) and don't survive multiple-comparison correction at this
+k. One cell (qwen3-8b on `tie_paraphrase`) does cross the nominal p<0.05 line
+uncorrected (Fisher exact p=0.0049) — with 18 tests at alpha=0.05, ~1 such hit
+is exactly what chance predicts, and Holm correction removes it, which is the
+textbook reason the corrected count is the one worth quoting, not the raw one.
+This result **replicated independently**: a second stochastic run (same code,
+fresh samples, temperature 1.0 — `results/` has both raw JSON files) landed on
+the same qualitative finding — 0/18 Holm-significant both times — despite the
+individual numbers moving between runs, as real sampling noise does. What *is*
+large and consistent across both runs is a pure **label/token preference**,
+measurable for the first time because the design separates it: on tie items,
+the judge's raw rate of answering "A" — pooled across content and position, so
+"A" is attached to each answer and each slot equally often — deviates from the
+unbiased 0.5 by a mean of 0.183, three to four times the size of the position
+effect, and by as much as 0.39 for one judge (deepseek-v4-flash on
+`tie_paraphrase`: P(says "A") = 0.11, essentially the mirror image of
+mistral-nemo's 0.76 on the same item — two different judges, two different and
+large label preferences, in opposite directions). The earlier design could not
+tell any of this apart — position and label were perfectly confounded, and the
+caveat box below named "label asymmetry" as a possibility without a way to test
+it. This run tests it: what looked like an order effect was, substantially, the
+judge's opinion of the *letter*, not the *slot*.
 
 The point verdict survives saturation; the distribution — what a QQ-style
 structural test or a confidence interval needs — does not.
@@ -212,6 +229,25 @@ changed the finding, not just the precision: the "order effect" the first run
 reported was substantially a label preference, not a position preference — see
 above.
 
+A third round switched from reading the code to executing it: installing the
+dependencies, running the parser against realistic model completions, and
+property-testing the Lean statements numerically. Every claim was checked
+before being acted on — not all of them held up. Two real, narrow bugs
+confirmed and fixed: a public function (`s_odd([])` in `qq_cbd.py`) silently
+returned a sentinel instead of raising on degenerate input, and the parser's
+fallback took the *first* verdict letter in content rather than the last, so
+"I think A is worse, B is better" parsed as A instead of the actual verdict B
+— fixed by taking the last match, consistent with the reasoning-fallback path
+a few lines below. But most of that round's other claimed reproductions did
+NOT hold when actually run: three of four cited parser-bug examples returned
+the correct letter against the code as shipped, and a claimed missing
+length-check in `cbd_cyclic` was already there and already raised correctly.
+Neither the essay nor the code changed on the strength of an unverified claim
+— every fix above was applied only after reproducing the failure directly,
+the same discipline the essay itself argues for. The measurement was re-run
+with the real fix live; results/ has both stochastic runs, and the core
+finding (0/18 Holm-significant) replicated across them.
+
 If you take one thing away:
 
 > **Gate your order-effect statistics on identifiability. A bias number from a
@@ -229,7 +265,8 @@ Everything needed to check the claims above.
 | `python/experiment_llm_judge_saturation.py` | The dispersion/order-effect measurement across judges (OpenRouter). |
 | `python/qq_cbd.py` | QQ equality, order-sensitivity, and the cyclic-system CbD functional. |
 | `python/test_qq_cbd.py` | Unit tests for the above, against distributions with known structure (`pytest python/`). |
-| `results/` | Raw JSON from the run reported above (14/18 cells fail the two-sided gate; 0/18 order effects distinguishable from noise). |
+| `results/` | Raw JSON from both independent runs reported above (14/18 cells fail the two-sided gate both times; 0/18 order effects survive Holm-Bonferroni both times). |
+| `CITATION.cff` | Machine-readable citation metadata. |
 
 **Reproduce the measurement** (~$0.03 at `--k 12`, ~$0.21 at the `--k 40` used above):
 

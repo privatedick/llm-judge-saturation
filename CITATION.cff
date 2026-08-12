@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this essay, code, or Lean proofs, please cite it as below."
+title: "Two kinds of saturation: why LLM-judge order bias is hard to measure"
+authors:
+  - name: "privatedick"
+url: "https://github.com/privatedick/llm-judge-saturation"
+repository-code: "https://github.com/privatedick/llm-judge-saturation"
+date-released: "2026-08-11"
+license: MIT
+keywords:
+  - LLM-as-judge
+  - question-order effects
+  - quantum cognition
+  - QQ equality
+  - saturation
+  - Lean 4

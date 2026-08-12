@@ -139,7 +139,24 @@ _VERDICT_RE = re.compile(r"\b([AB])\b")
 
 
 def _parse_verdict(content: str) -> str | None:
-    """Parse an 'A'/'B' verdict. Returns None rather than guessing."""
+    """Parse an 'A'/'B' verdict. Returns None rather than guessing.
+
+    Round-3 review (2026-08-12): the fallback branch used to take the FIRST
+    \\b[AB]\\b match in content, on the (usually true, per JUDGE_SYSTEM's "no
+    explanation" instruction) assumption that content is terse and direct. It
+    isn't always: a judge that explains before concluding despite the
+    instruction can write "I think A is worse, B is better" — first-match
+    grabs the "A" mentioned in passing, not the actual verdict "B" at the end.
+    Now takes the LAST match instead, matching the reasoning-fallback's own
+    "the verdict concludes the trace" assumption a few lines below — neither
+    heuristic is provably correct for adversarial phrasing ("the better answer
+    is A, not B" would still misparse under either rule), but LAST is the
+    better default for genuine explain-then-conclude text, which is the
+    demonstrated failure mode. See test_llm_judge_saturation.py for the
+    verified case (3 of the round-3 review's 4 claimed examples did NOT
+    reproduce against this parser -- only this one did; checked empirically,
+    not applied on the review's say-so).
+    """
     if not content:
         return None
     s = content.strip()
@@ -147,8 +164,8 @@ def _parse_verdict(content: str) -> str | None:
         return s.upper()
     if s[0] in "AB" and (len(s) == 1 or not s[1].isalpha()):
         return s[0]                       # "B." / "B is better"
-    m = _VERDICT_RE.search(s)             # "Answer A is correct"
-    return m.group(1) if m else None
+    hits = _VERDICT_RE.findall(s)         # "Answer A is correct"; last = concludes
+    return hits[-1] if hits else None
 
 
 def _call(model: str, messages: list[dict], temperature: float, timeout: int = 90,
@@ -376,7 +393,11 @@ def main() -> dict:
         raise SystemExit("OPENROUTER_API_KEY not set")
 
     models = MODELS[:1] if args.pilot else MODELS
-    items = ITEMS[:2] if args.pilot else ITEMS
+    # Round-3 review: ITEMS[:2] (arith, hashmap) are both clear-winner items --
+    # a pilot run touched no tie item, so it validated plumbing while skipping
+    # every path the experiment exists to measure (no dispersed cell, no gate
+    # boundary, no label/position rule to disambiguate). One clear + one tie.
+    items = [ITEMS[0], ITEMS[3]] if args.pilot else ITEMS
     k = 6 if args.pilot else args.k
 
     tasks = [(m, it) for m in models for it in items]

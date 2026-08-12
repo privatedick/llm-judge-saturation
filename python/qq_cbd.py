@@ -126,9 +126,18 @@ def s_odd(values: list[float] | np.ndarray) -> float:
     """max over sign patterns with an ODD number of -1 of sum(eps_i * x_i).
 
     Brute force over 2**n patterns (n<=~10 in practice; CHSH is n=4). Exact.
+
+    Round-3 review (2026-08-12): ``s_odd([])`` used to return ``-inf`` silently
+    (n=0 has no odd-parity sign pattern at all, so the max-over-nothing default
+    never got overwritten) — a public function silently returning a sentinel
+    for degenerate input instead of raising. ``cbd_cyclic`` already guards
+    ``n<2`` before ever calling this, but a direct caller of the public API
+    got no such protection.
     """
     x = np.asarray(values, dtype=float)
     n = len(x)
+    if n < 1:
+        raise ValueError("s_odd requires at least 1 value (n=0 has no sign pattern)")
     best = -np.inf
     for signs in product((1.0, -1.0), repeat=n):
         if signs.count(-1.0) % 2 == 1:
