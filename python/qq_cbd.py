@@ -37,6 +37,16 @@ def _validate_joint(p: Array2, tol: float = 1e-9) -> np.ndarray:
     a = np.asarray(p, dtype=float)
     if a.shape != (2, 2):
         raise ValueError(f"joint must be 2x2, got {a.shape}")
+    # E2E review (2026-08-13): NaN comparisons are always False in IEEE 754, so
+    # `a < -tol` and `abs(s - 1.0) > 1e-6` both silently pass a NaN-containing
+    # joint through -- qq_residual then returns a plausible-looking number
+    # computed from garbage, and order_effect returns total_variation=nan
+    # PLUS order_sensitive=False, a silent false negative (a genuinely
+    # order-sensitive process gets reported as insensitive). Same failure
+    # class as the s_odd([]) bug fixed in round 3 -- that fix didn't
+    # generalize to this function. Explicit isnan check closes it here.
+    if np.isnan(a).any():
+        raise ValueError("joint contains NaN")
     if (a < -tol).any():
         raise ValueError("joint has negative probabilities")
     s = a.sum()
@@ -175,6 +185,11 @@ def cbd_cyclic(bunch_expectations: list[float],
     n = len(corr)
     if n < 2:
         raise ValueError("cyclic system needs rank n>=2")
+    # Same NaN-blindness class as _validate_joint (see there): any comparison
+    # against NaN is False under IEEE 754, so the range check below silently
+    # passed NaN through before this guard was added (E2E review, 2026-08-13).
+    if np.isnan(corr).any():
+        raise ValueError("bunch expectations contain NaN")
     if (np.abs(corr) > 1 + 1e-9).any():
         raise ValueError("bunch expectations must lie in [-1, 1]")
     if len(marginal_mismatches) != n:
@@ -182,7 +197,10 @@ def cbd_cyclic(bunch_expectations: list[float],
             f"a rank-{n} cyclic system needs {n} marginal mismatches, "
             f"got {len(marginal_mismatches)}"
         )
-    di = float(np.sum(np.abs(marginal_mismatches)))
+    mm = np.asarray(marginal_mismatches, dtype=float)
+    if np.isnan(mm).any():
+        raise ValueError("marginal mismatches contain NaN")
+    di = float(np.sum(np.abs(mm)))
     so = s_odd(corr)
     cnt = so - (n - 2) - di
     return CbDResult(cnt=float(cnt), contextual=bool(cnt > tol),

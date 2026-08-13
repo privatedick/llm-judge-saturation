@@ -21,10 +21,12 @@ from __future__ import annotations
 import socket
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 import requests
 
+import experiment_llm_judge_saturation as saturation_mod
 from experiment_llm_judge_saturation import _post_with_hard_deadline
 
 
@@ -99,3 +101,73 @@ def test_hard_deadline_actually_cuts_off_a_hung_request():
     )
 
     server_thread.join(timeout=byte_interval * n_bytes + 3)
+
+
+def test_pool_saturation_causes_false_positive_deadline_before_fix():
+    """E2E review (2026-08-13), BUG-3: `future.result(timeout=hard_deadline)`
+    clocks from SUBMIT time, not from when the worker thread actually starts
+    `requests.post`. If every pool worker is already busy, a later submission
+    queues -- and can exceed `hard_deadline` purely waiting in queue, before a
+    socket is ever opened. Reproduced directly (not trusted from the comment)
+    by shrinking the hang-guard pool to 1 worker, occupying it with a slow
+    task, then confirming a second call raises "deadline exceeded" against a
+    server that never receives a connection.
+    """
+    tiny_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-tiny-pool")
+    original_pool = saturation_mod._HANG_GUARD_POOL
+    saturation_mod._HANG_GUARD_POOL = tiny_pool
+    try:
+        occupy_seconds = 1.5
+        tiny_pool.submit(time.sleep, occupy_seconds)  # holds the only worker
+
+        connected = threading.Event()
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+
+        def _serve():
+            srv.settimeout(occupy_seconds)
+            try:
+                conn, _ = srv.accept()
+                connected.set()
+                conn.close()
+            except OSError:
+                pass  # expected: the queued call never got far enough to connect
+            srv.close()
+
+        server_thread = threading.Thread(target=_serve, daemon=True)
+        server_thread.start()
+
+        hard_deadline = 0.3  # well under occupy_seconds -- the queue wait alone exceeds it
+        t0 = time.time()
+        with pytest.raises(requests.RequestException, match="hard wall-clock deadline"):
+            _post_with_hard_deadline(
+                f"http://127.0.0.1:{port}/",
+                headers={},
+                payload={"x": 1},
+                per_read_timeout=30,
+                hard_deadline=hard_deadline,
+            )
+        elapsed = time.time() - t0
+
+        # Check IMMEDIATELY, before the occupying task frees the worker and
+        # the still-queued work item finally gets to run for real -- that
+        # eventual real connection is expected (the abandoned future doesn't
+        # cancel the queued item, same as the module-level comment says) and
+        # would give a false pass here if checked after waiting it out.
+        assert not connected.is_set(), (
+            "server received a connection within the raise window -- this "
+            "should have failed on queue wait alone, before any request was "
+            "ever sent"
+        )
+        assert elapsed < occupy_seconds, (
+            f"took {elapsed:.2f}s -- should have raised at ~{hard_deadline}s "
+            f"of queue wait, not waited for the occupying task to finish"
+        )
+
+        server_thread.join(timeout=occupy_seconds + 2)
+    finally:
+        saturation_mod._HANG_GUARD_POOL = original_pool
+        tiny_pool.shutdown(wait=False, cancel_futures=True)

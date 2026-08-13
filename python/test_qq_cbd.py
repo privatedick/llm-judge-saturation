@@ -60,6 +60,20 @@ def test_joint_validation_rejects_malformed_input():
         qq_residual(np.ones((3, 3)) / 9, _independent_joint(0.5, 0.5))  # wrong shape
 
 
+def test_joint_validation_rejects_nan():
+    """IEEE 754 NaN comparisons are always False, so the negative/sums-to-1
+    range checks above silently passed a NaN-containing joint through before
+    this guard was added -- qq_residual returned a plausible-looking number
+    computed from garbage, and order_effect returned total_variation=nan
+    PLUS order_sensitive=False, a silent false negative."""
+    p_nan = np.array([[np.nan, 0.5], [0.3, 0.2]])
+    p_ok = _independent_joint(0.5, 0.5)
+    with pytest.raises(ValueError, match="NaN"):
+        qq_residual(p_nan, p_ok)
+    with pytest.raises(ValueError, match="NaN"):
+        order_effect(p_nan, p_ok)
+
+
 # --------------------------------------------------------------------------- #
 # Order sensitivity
 # --------------------------------------------------------------------------- #
@@ -146,6 +160,15 @@ def test_rank_mismatch_is_rejected():
         cbd_cyclic([1, 1, 1, -1], [0, 0])         # 4 bunches, 2 mismatches
     with pytest.raises(ValueError):
         cbd_cyclic([1.5, 1, 1, -1], [0, 0, 0, 0])  # correlation out of [-1,1]
+
+
+def test_cbd_cyclic_rejects_nan():
+    """Same NaN-blindness class as the joint-validation guard above, in
+    cbd_cyclic's bunch_expectations and marginal_mismatches."""
+    with pytest.raises(ValueError, match="NaN"):
+        cbd_cyclic([1, 1, 1, float("nan")], [0, 0, 0, 0])
+    with pytest.raises(ValueError, match="NaN"):
+        cbd_cyclic([1, 1, 1, -1], [0, 0, float("nan"), 0])
 
 
 # --------------------------------------------------------------------------- #

@@ -5,3 +5,4 @@ lean/.lake/
 .env
 python/*.egg-info/
 python/build/
+python/uv.lock

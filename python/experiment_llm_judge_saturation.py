@@ -25,8 +25,12 @@ DESIGN NOTE 2 (calibrated saturation gate, round-2 review): flagging a cell
 itself statistically uncalibrated. At k samples, finite-sample noise pushes a
 truly-dispersed judge over the line a real fraction of the time — e.g. a judge
 whose long-run majority probability is genuinely 0.85 still crosses an observed
-top_prob>=0.9 line 28% of the time at k=12 (exact binomial), and the bias
-persists, smaller, at larger k. `_dist_stats` now runs a one-sided exact
+top_prob>=0.9 line 44% of the time at k=12, and 26% at the k=40 used for the
+headline runs (exact binomial; this note read "28% at k=12" until 2026-08-13,
+which does not reproduce — recompute with scipy.stats.binom to check). The bias
+shrinks with k but NOT monotonically, because top_count must clear the integer
+ceil(0.9k): 32% at k=15, back up to 40% at k=20, 26% at k=40.
+`_dist_stats` now runs a one-sided exact
 binomial test (H0: p<=threshold vs H1: p>threshold) and reports `saturated_exact`
 from that instead of the raw comparison; `top_prob` and a Clopper-Pearson 95% CI
 remain as descriptive point estimates, not as the gate criterion itself.
@@ -54,11 +58,12 @@ import json
 import os
 import random
 import re
+import sys
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import date
-from math import comb
+from math import ceil, comb, log
 from pathlib import Path
 
 import numpy as np
@@ -153,7 +158,7 @@ def _parse_verdict(content: str) -> str | None:
     heuristic is provably correct for adversarial phrasing ("the better answer
     is A, not B" would still misparse under either rule), but LAST is the
     better default for genuine explain-then-conclude text, which is the
-    demonstrated failure mode. See test_llm_judge_saturation.py for the
+    demonstrated failure mode. See the parser test module for the
     verified case (3 of the round-3 review's 4 claimed examples did NOT
     reproduce against this parser -- only this one did; checked empirically,
     not applied on the review's say-so).
@@ -183,7 +188,21 @@ def _parse_verdict(content: str) -> str | None:
 # eventually fires on its own, but the caller stops waiting and retries.
 # Verified against a real hanging server, not just "looks right": see
 # test_llm_judge_saturation_hardening.py::test_hard_deadline_actually_cuts_off_a_hung_request.
-_HANG_GUARD_POOL = ThreadPoolExecutor(max_workers=64, thread_name_prefix="openrouter-call")
+#
+# E2E review (2026-08-13): `future.result(timeout=hard_deadline)` clocks from
+# SUBMIT, not from when the worker thread actually starts `requests.post`. If
+# more calls are in flight than there are pool workers, later submissions
+# queue, and a queued-then-executed call can report a "hard deadline
+# exceeded" failure without a socket ever having opened -- reproduced with 70
+# submissions against the old 64-worker pool (6 of 70 failed queue-only, not
+# network; see test_llm_judge_saturation_hardening.py::
+# test_pool_saturation_causes_false_positive_deadline_before_fix). `--jobs` x
+# max_retries is the realistic worst-case concurrently-in-flight count;
+# raised to 128 for headroom, and main() now asserts that worst case against
+# this constant explicitly rather than leaving the margin implicit.
+_HANG_GUARD_POOL_MAX_WORKERS = 128
+_HANG_GUARD_POOL = ThreadPoolExecutor(max_workers=_HANG_GUARD_POOL_MAX_WORKERS,
+                                       thread_name_prefix="openrouter-call")
 
 
 def _post_with_hard_deadline(url: str, headers: dict, payload: dict,
@@ -502,9 +521,30 @@ def _print_study_line(tag: str, result: dict) -> None:
           f"cost=${s['estimated_cost_usd']}")
 
 
+def _min_k_for_gate_power(sat_top_prob: float, alpha: float) -> int:
+    """Smallest k at which the exact one-sided binomial gate CAN possibly
+    reject H0 (i.e. flag `saturated_exact`), for a perfectly deterministic
+    (k/k) cell -- the best case for the gate.
+
+    E2E review (2026-08-13): the gate's smallest attainable p-value at k
+    samples is `sat_top_prob ** k` (a perfectly deterministic cell, all k
+    agreeing). Below this k, `saturated_exact` is False for EVERY possible
+    outcome, including a truly 100%-deterministic judge -- the gate has
+    exactly zero statistical power, silently. At defaults (sat_top_prob=0.9,
+    alpha=0.05) this floor is k=29: the old default k=15, --pilot's k=6, and
+    even the README's own quick-repro suggestion of --k 12 all sat below it,
+    so a reader following the quick-start would see frac_conditions_
+    saturated=0.0 regardless of the judges' true behavior and reasonably
+    (but wrongly) conclude "the headline result doesn't replicate."
+    """
+    return ceil(log(alpha) / log(sat_top_prob))
+
+
 def main() -> dict:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--k", type=int, default=15, help="samples per (model,item,condition)")
+    ap.add_argument("--k", type=int, default=30, help="samples per (model,item,condition) "
+                    "-- default raised from 15 to clear the exact-gate power floor "
+                    "at the default --sat-top-prob/--alpha (see _min_k_for_gate_power)")
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--temperatures", type=float, nargs="+", default=None,
                     help="run a temperature sweep instead of a single --temperature "
@@ -543,6 +583,29 @@ def main() -> dict:
         items = ITEMS
     k = 6 if args.pilot else args.k
 
+    # E2E review (2026-08-13): worst-case concurrently-in-flight calls is
+    # jobs * max_retries (every in-flight call simultaneously on its last
+    # retry). Above the hang-guard pool's worker count, later submissions
+    # queue and can false-positive a "hard deadline exceeded" with no request
+    # ever sent (see _HANG_GUARD_POOL comment). Warn rather than silently
+    # eating spurious failures.
+    _worst_case_inflight = args.jobs * 4  # max_retries default in _call()
+    if _worst_case_inflight > _HANG_GUARD_POOL_MAX_WORKERS:
+        print(f"WARNING: --jobs={args.jobs} x max_retries=4 = "
+              f"{_worst_case_inflight} can exceed the hang-guard pool's "
+              f"{_HANG_GUARD_POOL_MAX_WORKERS} workers in the worst case, "
+              f"which can cause spurious 'hard deadline exceeded' failures "
+              f"on calls that were only ever queued, not hung.")
+
+    k_min = _min_k_for_gate_power(args.sat_top_prob, args.alpha)
+    if k < k_min:
+        print(f"WARNING: k={k} is below the exact-gate power floor (k>={k_min} "
+              f"needed for sat_top_prob={args.sat_top_prob}, alpha={args.alpha}). "
+              f"saturated_exact will be False for EVERY cell regardless of the "
+              f"judges' true behavior -- this run cannot report a meaningful "
+              f"saturation fraction. Descriptive stats (top_prob, n_eff) are "
+              f"still valid; only the calibrated gate is powerless at this k.")
+
     out_dir = Path(__file__).resolve().parents[1] / "results"
     out_dir.mkdir(parents=True, exist_ok=True)
     tag = "pilot_" if args.pilot else args.tag
@@ -579,3 +642,13 @@ def main() -> dict:
 
 if __name__ == "__main__":
     main()
+    # E2E review (2026-08-13): _HANG_GUARD_POOL's threads are non-daemon, so
+    # Python's concurrent.futures atexit handler joins every one of them
+    # before the process can exit -- including any thread still blocked
+    # inside a hung requests.post() past its per-read timeout (up to ~90s,
+    # since the hard-deadline wrapper abandons waiting on it but can't kill
+    # it). The JSON result is already written and the status line already
+    # printed by this point, so an early, deliberate exit is safe here; flush
+    # stdout first since os._exit() bypasses normal buffering/atexit cleanup.
+    sys.stdout.flush()
+    os._exit(0)
