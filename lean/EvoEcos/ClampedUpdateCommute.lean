@@ -28,7 +28,9 @@ Together they give the honest asymmetry the Python experiment found: *no
 saturation ⇒ order-independent* holds always; the biconditional does not (see
 `test_common_bound_saturation_is_order_independent`).
 
-Target: 0 sorry / 0 axiom.
+Target: no `sorry` and no repo-declared `axiom`. Enforced at build time by
+`AxiomAudit.lean`, not merely intended: everything here reduces to Lean's three
+standard axioms (`propext`, `Classical.choice`, `Quot.sound`) and nothing else.
 -/
 
 import Mathlib.Data.Real.Basic

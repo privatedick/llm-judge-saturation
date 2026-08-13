@@ -20,7 +20,9 @@ persuader with a small rotation budget can move a decision by at most `sin θ`.
 This is the coherent-operator complement to the Danilov & Lambert-Mogiliansky
 reachability result (unconstrained *measurement* sequences reach any state).
 
-Target: 0 sorry / 0 axiom.
+Target: no `sorry` and no repo-declared `axiom`. Enforced at build time by
+`AxiomAudit.lean`, not merely intended: everything here reduces to Lean's three
+standard axioms (`propext`, `Classical.choice`, `Quot.sound`) and nothing else.
 -/
 
 import Mathlib.Analysis.SpecialFunctions.Trigonometric.Basic

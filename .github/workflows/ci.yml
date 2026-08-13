@@ -21,23 +21,40 @@ jobs:
         run: python -m pytest python/ -v
 
   lean-build:
-    name: Lean build (0 sorry / 0 axiom)
+    name: Lean build (0 sorry / 0 repo-declared axiom)
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: lean
     steps:
       - uses: actions/checkout@v4
+      # `lake build` here also runs the `AxiomAudit` default target, which is the
+      # real sorry/axiom gate: it walks every declaration this repo's modules
+      # contribute and fails if any depends on an axiom outside Lean's standard
+      # three. That catches `sorryAx` in any syntactic position and any `axiom`
+      # command added to the repo.
+      #
+      # It replaces a line-anchored `grep -rnP '^\s*sorry\b'` that used to stand
+      # here and called itself "the real gate". It was not one: `exact sorry`
+      # sits on a line starting with `exact`, so the grep found nothing while
+      # `#print axioms` reported `sorryAx`. Both halves were demonstrated before
+      # this step was rewritten.
       - uses: leanprover/lean-action@v1
         with:
           lake-package-directory: lean
-      - name: Check for sorry tactic use
-        run: |
-          # A bare `grep sorry` matches header-comment prose too (see README's own
-          # caveat). Anchor to line-start so it only catches an actual tactic use,
-          # matching this repo's own verify methodology (evoecos formal/verify.sh).
-          if grep -rnP '^\s*sorry\b' EvoEcos/ --include="*.lean"; then
-            echo "::error::sorry tactic use found above -- baseline is 0"
-            exit 1
-          fi
-          echo "0 sorry tactic uses (build succeeding is necessary but not sufficient -- Lean warns, not fails, on sorry by default, so this line-anchored grep is the real gate)."
+      # Independent of the axiom footprint: replay the built environment through
+      # the kernel, catching anything that got into the environment without
+      # passing it (unsafe/metaprogramming routes, corrupt oleans).
+      #
+      # Deliberately invoked directly rather than via lean-action's `leanchecker:
+      # true` input. That input runs bare `lake env leanchecker`, which derives
+      # the module to check from the *package* name -- here `llmJudgeSaturation`,
+      # capitalized to `LlmJudgeSaturation`, which is not a module, so it exits 1
+      # with "Could not find any oleans for". Naming the library modules
+      # explicitly is the same tool without that failure.
+      #
+      # Note leanchecker is NOT a sorry check: it exits 0 on `sorryAx`, since
+      # that is a legitimate axiom to the kernel. AxiomAudit above is what makes
+      # the 0-sorry claim; this checks a different property.
+      - name: Replay environment through the kernel (leanchecker)
+        run: lake env leanchecker EvoEcos AxiomAudit

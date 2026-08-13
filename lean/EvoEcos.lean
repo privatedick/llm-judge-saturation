@@ -15,7 +15,13 @@ Two independent Lean modules backing the essay's claims:
 
 Usage:
   lake exe cache get   # fetch prebuilt Mathlib (this repo pins a Mathlib rev)
-  lake build           # 0 sorry / 0 axiom on a clean build
+  lake build           # builds the proofs AND runs the axiom audit
+
+`lake build` is the gate, not just a build: `AxiomAudit.lean` is a default
+target, so the same command fails if any declaration in these modules depends on
+an axiom outside Lean's standard three — which is what catches a stray `sorry`
+(it shows up as `sorryAx`) in any syntactic position. Lean itself only *warns*
+on `sorry` and would otherwise exit 0.
 -/
 
 import EvoEcos.ClampedUpdateCommute

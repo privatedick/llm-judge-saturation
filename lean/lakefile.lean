@@ -12,3 +12,10 @@ require mathlib from git
 
 @[default_target]
 lean_lib «EvoEcos» where
+
+-- The "0 sorry / 0 repo-declared axiom" gate, as a build target rather than a
+-- CI-only grep: `AxiomAudit.lean` imports `EvoEcos` and fails elaboration if any
+-- repo declaration depends on an axiom outside Lean's standard three. Because it
+-- is a default target, plain `lake build` enforces it — locally and in CI alike.
+@[default_target]
+lean_lib «AxiomAudit» where
