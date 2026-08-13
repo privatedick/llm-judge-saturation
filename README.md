@@ -89,8 +89,11 @@ capped integrator has order effects for the same reason — no minds required.
 ## Output saturation *destroys the ability to measure* one
 
 Now the LLM judge, and this is a genuinely different mechanism. Kang (2026) ran
-the QQ-equality audit on an LLM judge and hit a wall: the model's next-token
-distributions were near-deterministic — **saturated** — for 17 of 18 item pairs.
+the QQ-equality audit on an LLM judge and hit a wall: although every
+pre-specified health gate passed, the model's next-token distributions were
+near-deterministic — **saturated** — for 17 of 18 item pairs under the
+direct-evaluation framing (and 7 of 8 under a persona framing) — the audit was
+healthy by its own pre-registered criteria and the measurement still failed.
 When almost all probability mass sits on one token, many distinct latent states
 map to the same observable, and the order statistic you compute no longer
 identifies anything.
@@ -129,11 +132,19 @@ fresh samples, temperature 1.0 — `results/` has both raw JSON files) landed on
 the same qualitative finding — 0/18 Holm-significant both times — despite the
 individual numbers moving between runs, as real sampling noise does. What *is*
 large and consistent across both runs is a pure **label/token preference**,
-measurable for the first time because the design separates it: on tie items,
+separable from position for the first time *in this measurement series* because
+the design crosses the two. Kang's v2 arrives at the same requirement from the
+other direction — label assignment there "materially changed several
+mapping-specific QQ verdicts," and the paper closes by arguing that saturation
+screening *and label counterbalancing* should precede structural
+interpretation. Two designs converging on that is better evidence it matters
+than either alone; the claim here is not priority, it is that the crossed
+design makes the label effect a number rather than a caveat. On tie items,
 the judge's raw rate of answering "A" — pooled across content and position, so
 "A" is attached to each answer and each slot equally often — deviates from the
-unbiased 0.5 by a mean of 0.183, three to four times the size of the position
-effect, and by as much as 0.39 for one judge (deepseek-v4-flash on
+unbiased 0.5 by a mean of 0.183, roughly three times the size of the position
+effect (3.1× in this run, 3.0× in the replication), and by as much as 0.39 for
+one judge (deepseek-v4-flash on
 `tie_paraphrase`: P(says "A") = 0.11, essentially the mirror image of
 mistral-nemo's 0.76 on the same item — two different judges, two different and
 large label preferences, in opposite directions). The earlier design could not
@@ -159,7 +170,8 @@ structural test or a confidence interval needs — does not.
 > also needs calibration: with finite `k`, a point estimate of top-token
 > probability crossing 0.9 is not the same as being confidently above 0.9 — the
 > implementation tests that with an exact one-sided binomial test rather than a
-> bare threshold comparison, for exactly the reason the paragraph above needs it.
+> bare threshold comparison, for exactly the reason the saturation counts above
+> need it.
 
 ## A bound on how far framing can move a decision
 
@@ -203,31 +215,14 @@ GPU. This is a conceptual separation plus a few proved bounds — not a product,
 not a judge-fixing tool. The saturation numbers above are a small study (three
 models, six items) — enough to show the effect is real and common, not enough to
 be representative; a proper study would sweep more judges, items, and a standard
-preference set.
+preference set. And one analytic check remains open: whether boundary proximity
+actually raises the commutator in the toy dynamics.
 
-An external review (2026-08-12) asked for two of those specifically: proprietary
-frontier judges, and the interaction between sampling temperature and measured
-saturation. One extended cleanly, one didn't. Added `openai/gpt-5-mini` — a
-proprietary frontier judge, not open-weight like the three above — on the two
-tie items plus one clear-winner item, same design (k=40, T=1.0, ~$0.04): it
-reproduces the same qualitative pattern. `capital` (clear winner) saturates
-correctly onto the right answer, same as the open-weight judges. On the two
-ties, content-position order effects stay near zero (0.012 both) while label
-bias is real and item-specific: 0.49 (essentially unbiased) on `tie_paraphrase`,
-0.11 (strongly "B"-preferring) on `tie_greeting` — the same judge, two very
-different biases depending on the specific prompt, which is more evidence for
-"item-specific token quirk," not "universal position bias." The temperature
-sweep did not extend as cleanly: two attempts to run judges across T ∈ {0, 0.5,
-1} both stalled mid-run (the same OpenRouter-connection-outlives-the-timeout
-failure mode noted below, twice, on this measurement in particular) and were
-abandoned rather than reported from a killed, incomplete run. The temperature
-question stays genuinely open — this note does not claim an answer it doesn't
-have.
-
-And one analytic check remains open: whether boundary proximity
-actually raises the commutator in the toy dynamics. An earlier version of this measurement reported something far more dramatic: a
-judge flipping its verdict with order on 83% of samples. **It did not replicate.**
-Two things were wrong. The verdict parser uppercased the text before matching
+The rest of this section is the note's own error log, in the order the errors
+were found. An earlier version of this measurement reported something far more
+dramatic: a judge flipping its verdict with order on 83% of samples. **It did
+not replicate.** Two things were wrong. The verdict parser uppercased the text
+before matching
 `\b([AB])\b`, so the English article "a" could match as a verdict of *A* —
 biasing toward the slot-A answer, which is to say manufacturing the very effect
 being measured. And at k=12 a difference of one sample looks like an effect.
@@ -263,11 +258,33 @@ a few lines below. But most of that round's other claimed reproductions did
 NOT hold when actually run: three of four cited parser-bug examples returned
 the correct letter against the code as shipped, and a claimed missing
 length-check in `cbd_cyclic` was already there and already raised correctly.
-Neither the essay nor the code changed on the strength of an unverified claim
+Neither this note nor the code changed on the strength of an unverified claim
 — every fix above was applied only after reproducing the failure directly,
-the same discipline the essay itself argues for. The measurement was re-run
-with the real fix live; results/ has both stochastic runs, and the core
+the same discipline this note itself argues for. The measurement was re-run
+with the real fix live; `results/` has both stochastic runs, and the core
 finding (0/18 Holm-significant) replicated across them.
+
+Then an external review (2026-08-12) asked for two extensions specifically:
+proprietary frontier judges, and the interaction between sampling temperature
+and measured saturation. One extended cleanly, one didn't. Added
+`openai/gpt-5-mini` — a proprietary frontier judge, not open-weight like the
+three above — on the two tie items plus one clear-winner item, same design
+(k=40, T=1.0, ~$0.04): it reproduces the same qualitative pattern. `capital`
+(clear winner) saturates correctly onto the right answer, same as the
+open-weight judges. On the two ties, content-position order effects stay near
+zero (0.012 both) while label bias is real and item-specific: 0.49
+(essentially unbiased) on `tie_paraphrase`, 0.11 (strongly "B"-preferring) on
+`tie_greeting` — the same judge, two very different biases depending on the
+specific prompt, which is more evidence for "item-specific token quirk," not
+"universal position bias." The temperature sweep did not extend as cleanly:
+two attempts to run judges across T ∈ {0, 0.5, 1} both stalled mid-run —
+twice to the same cause, an OpenRouter connection that outlived its own
+timeout, because `requests`' timeout is a per-read inactivity timer rather
+than a wall-clock deadline and a trickling connection never lets it fire (the
+code now enforces a hard deadline; it did not exist in time to save those
+runs) — and were abandoned rather than reported from a killed, incomplete
+run. The temperature question stays genuinely open — this note does not claim
+an answer it doesn't have.
 
 If you take one thing away:
 
@@ -281,31 +298,43 @@ Everything needed to check the claims above.
 
 | Path | What it is |
 |---|---|
+| `lean/EvoEcos.lean` | Root module importing both proof files — what `lake build` and CI actually build. |
+| `lean/AxiomAudit.lean` | Machine-checked backing for the "0 sorry / 0 axiom" claim, as a default build target rather than a CI-only grep — `lake build` fails if any declaration depends on an axiom outside Lean's standard three. |
 | `lean/EvoEcos/ClampedUpdateCommute.lean` | `interior_commute` (interior clamped updates commute) + a boundary witness. 0 sorry / 0 axiom. |
 | `lean/EvoEcos/PersuasionOperator.lean` | `power_eq`, `power_le_abs_sin` (the `\|sin θ\|` bound), `power_tight`. 0 sorry / 0 axiom. |
 | `python/experiment_llm_judge_saturation.py` | The dispersion/order-effect measurement across judges (OpenRouter). `--models`/`--item-ids`/`--temperatures` let you target a subset or sweep temperature without disturbing the headline run. |
 | `python/qq_cbd.py` | QQ equality, order-sensitivity, and the cyclic-system CbD functional. |
 | `python/test_qq_cbd.py`, `python/test_experiment_llm_judge_saturation.py` | Unit tests, against distributions/completions with known structure (`pytest python/`). |
+| `python/test_gate_power.py` | Empirically confirms the exact-binomial gate's power floor — the smallest `k` at which it can flag saturation at all (k=29 at the default `--sat-top-prob 0.9` / `--alpha 0.05`). |
+| `python/test_hardening.py` | Spins up a real trickling TCP server to prove the hard wall-clock deadline actually cuts off a hung OpenRouter call, and that a saturated thread pool can't fake one. |
 | `python/pyproject.toml` | `pip install -e python/` for a real package instead of a script. |
 | `.github/workflows/ci.yml` | Runs the Python tests and the Lean build (0 sorry / 0 axiom check) on every push. |
 | `results/` | Raw JSON from all runs reported above (14/18 cells fail the two-sided gate in both independent 3-model runs; 0/18 order effects survive Holm-Bonferroni in both; the `openai/gpt-5-mini` frontier-coverage addendum). |
 | `poc/poc_llm_judge_saturation.py` | Standalone, offline (no API key) demo of the position×label decomposition and calibrated gate against synthetic judges — a faster way to see the method work than reading the prose. Read its own docstring before citing the cost numbers: those model a sampling strategy this repo doesn't implement yet. |
 | `CITATION.cff` | Machine-readable citation metadata. |
 
-**Reproduce the measurement** (~$0.03 at `--k 12`, ~$0.21 at the `--k 40` used above):
+**Reproduce the measurement** (~$0.16 at the default `--k 30`, ~$0.21 at the
+`--k 40` used above; cost is linear in `k`, so `--k 12` would be ~$0.06):
 
 ```bash
 pip install -r python/requirements.txt
 export OPENROUTER_API_KEY=...
-python python/experiment_llm_judge_saturation.py --k 12
+python python/experiment_llm_judge_saturation.py          # --k defaults to 30
 ```
 
-`--k 12` is cheap but underpowered for the saturation gate itself: at that k, a
-judge whose true majority probability is genuinely 0.85 (clearly dispersed)
-still crosses a naive `top_prob >= 0.9` line from sampling noise alone a real
-fraction of the time — which is exactly why the gate here is an exact binomial
-test, not a point-estimate comparison (see above). Use `--k 40` to reproduce the
-numbers quoted in this README.
+**Do not lower `--k` below 29.** The exact binomial gate's smallest attainable
+p-value at `k` samples is `sat_top_prob ** k` — even a perfectly deterministic
+`k`-of-`k` cell. At the default `--sat-top-prob 0.9` / `--alpha 0.05` that
+crosses 0.05 only at `k = 29`, so at any smaller `k` the gate reports
+`saturated_exact = False` for *every* possible outcome, including a completely
+deterministic judge. An earlier version of this README suggested `--k 12` as a
+cheap quick-start; at that `k` the gate is silently powerless and a reader
+following it would see `frac_conditions_saturated = 0.0` and reasonably (but
+wrongly) conclude the headline result doesn't replicate. `python/test_gate_power.py`
+pins this down empirically. `--pilot` (1 model, 2 items, k=6) is a cheap
+end-to-end smoke test of the plumbing, not a small version of the result — it
+is far below the power floor and will report no saturation whatever the judge
+does. Use `--k 40` to reproduce the numbers quoted above exactly.
 
 **Check the proofs:**
 
