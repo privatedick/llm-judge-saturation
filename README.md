@@ -308,10 +308,24 @@ Everything needed to check the claims above.
 | `python/test_gate_power.py` | Empirically confirms the exact-binomial gate's power floor — the smallest `k` at which it can flag saturation at all (k=29 at the default `--sat-top-prob 0.9` / `--alpha 0.05`). |
 | `python/test_hardening.py` | Spins up a real trickling TCP server to prove the hard wall-clock deadline actually cuts off a hung OpenRouter call, and that a saturated thread pool can't fake one. |
 | `python/pyproject.toml` | `pip install -e python/` for a real package instead of a script. |
-| `.github/workflows/ci.yml` | Runs the Python tests and the Lean build (0 sorry / 0 axiom check) on every push. |
+| `.github/workflows/ci.yml` | Runs the Python tests, the PoC + its tests, and the Lean build (0 sorry / 0 axiom check) on every push. |
 | `results/` | Raw JSON from all runs reported above (14/18 cells fail the two-sided gate in both independent 3-model runs; 0/18 order effects survive Holm-Bonferroni in both; the `openai/gpt-5-mini` frontier-coverage addendum). |
 | `poc/poc_llm_judge_saturation.py` | Standalone, offline (no API key) demo of the position×label decomposition and calibrated gate against synthetic judges — a faster way to see the method work than reading the prose. Read its own docstring before citing the cost numbers: those model a sampling strategy this repo doesn't implement yet. |
+| `poc/test_poc_llm_judge_saturation.py` | Asserts the properties the PoC's docstrings claim: the saturation knob is monotonic (not inert or inverted) in every regime, `identifiable` tracks the calibrated gate rather than the raw `top_prob>=0.9` heuristic, the regime classifier is exhaustive and doesn't swallow the ideal judge into a dead band, and the cost model matches the real script's ~2x and refuses a sub-power-floor pilot. |
 | `CITATION.cff` | Machine-readable citation metadata. |
+
+**See the method work, no API key, in under a second** — pure standard-library
+Python, synthetic judges, the same calibrated gate and position×label
+decomposition the real script uses:
+
+```bash
+python poc/poc_llm_judge_saturation.py       # 0 dependencies, offline
+python -m pytest poc/ -v                     # the knob/gate/classifier properties, asserted
+```
+
+Read the PoC's own docstring before citing its cost numbers — one row models
+a sampling strategy this repo doesn't implement yet (flagged explicitly in
+the script's own output).
 
 **Reproduce the measurement** (~$0.16 at the default `--k 30`, ~$0.21 at the
 `--k 40` used above; cost is linear in `k`, so `--k 12` would be ~$0.06):

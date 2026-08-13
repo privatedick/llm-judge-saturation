@@ -20,6 +20,24 @@ jobs:
       - name: Run tests
         run: python -m pytest python/ -v
 
+  poc-tests:
+    name: PoC tests (0 dependencies, no API key needed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # No install step: the PoC and its tests are deliberately dependency-free
+      # (stdlib only, pytest is the only test-runner requirement) -- that is
+      # the whole point of it being the zero-friction entry point.
+      - name: Install pytest
+        run: pip install pytest
+      - name: Run PoC
+        run: python poc/poc_llm_judge_saturation.py
+      - name: Run PoC tests
+        run: python -m pytest poc/ -v
+
   lean-build:
     name: Lean build (0 sorry / 0 repo-declared axiom)
     runs-on: ubuntu-latest
