@@ -6,3 +6,6 @@ lean/.lake/
 python/*.egg-info/
 python/build/
 python/uv.lock
+.venv/
+.coverage
+.pytest_cache/
