@@ -1,5 +1,18 @@
 # Two kinds of saturation
 
+[![CI](https://github.com/privatedick/llm-judge-saturation/actions/workflows/ci.yml/badge.svg)](https://github.com/privatedick/llm-judge-saturation/actions/workflows/ci.yml)
+[![Lean 4: 0 sorry / 0 axiom](https://img.shields.io/badge/Lean%204-0%20sorry%20%C2%B7%200%20axiom-2ea44f)](lean/AxiomAudit.lean)
+[![Python 3.10 | 3.11 | 3.12 | 3.13](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue?logo=python&logoColor=white)](python/pyproject.toml)
+[![PoC: offline, no API key](https://img.shields.io/badge/PoC-offline%2C%20no%20API%20key-8957e5)](poc/poc_llm_judge_saturation.py)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+Every badge above is enforced by CI on every push, not asserted by hand. The
+Lean one is backed by a build-time axiom-footprint audit
+([`lean/AxiomAudit.lean`](lean/AxiomAudit.lean)) that fails the build if any
+declaration in this repository depends on an axiom outside Lean's standard
+three — not by grepping for the string `sorry`, which an earlier version of
+this repository did and which silently missed `exact sorry`.
+
 *Why an LLM judge flips when you swap the options — and why measuring that flip
 is subtle. One name, two mechanisms: saturation can **manufacture** an order
 effect, and, separately, it can **hide** one.*
@@ -308,7 +321,7 @@ Everything needed to check the claims above.
 | `python/test_gate_power.py` | Empirically confirms the exact-binomial gate's power floor — the smallest `k` at which it can flag saturation at all (k=29 at the default `--sat-top-prob 0.9` / `--alpha 0.05`). |
 | `python/test_hardening.py` | Spins up a real trickling TCP server to prove the hard wall-clock deadline actually cuts off a hung OpenRouter call, and that a saturated thread pool can't fake one. |
 | `python/pyproject.toml` | `pip install -e python/` for a real package instead of a script. |
-| `.github/workflows/ci.yml` | Runs the Python tests, the PoC + its tests, and the Lean build (0 sorry / 0 axiom check) on every push. |
+| `.github/workflows/ci.yml` | Runs the Python tests and the PoC + its tests across Python 3.10/3.11/3.12/3.13, and the Lean build (the `AxiomAudit` 0 sorry / 0 axiom gate + a `leanchecker` kernel replay), on every push. This is what the README badges report. |
 | `results/` | Raw JSON from all runs reported above (14/18 cells fail the two-sided gate in both independent 3-model runs; 0/18 order effects survive Holm-Bonferroni in both; the `openai/gpt-5-mini` frontier-coverage addendum). |
 | `poc/poc_llm_judge_saturation.py` | Standalone, offline (no API key) demo of the position×label decomposition and calibrated gate against synthetic judges — a faster way to see the method work than reading the prose. Read its own docstring before citing the cost numbers: those model a sampling strategy this repo doesn't implement yet. |
 | `poc/test_poc_llm_judge_saturation.py` | Asserts the properties the PoC's docstrings claim: the saturation knob is monotonic (not inert or inverted) in every regime, `identifiable` tracks the calibrated gate rather than the raw `top_prob>=0.9` heuristic, the regime classifier is exhaustive and doesn't swallow the ideal judge into a dead band, and the cost model matches the real script's ~2x and refuses a sub-power-floor pilot. |

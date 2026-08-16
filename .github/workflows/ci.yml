@@ -8,26 +8,41 @@ on:
 
 jobs:
   python-tests:
-    name: Python tests (offline, no API key needed)
+    name: Python tests ${{ matrix.python-version }} (offline, no API key needed)
     runs-on: ubuntu-latest
+    # The README's `python 3.10 | 3.11 | 3.12 | 3.13` badge and pyproject's
+    # `requires-python = ">=3.10"` are claims about which interpreters this
+    # actually runs on. This matrix is what makes them checkable rather than
+    # aspirational; widen the badge and this list together or neither.
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - name: Install dependencies
         run: pip install -r python/requirements.txt
       - name: Run tests
         run: python -m pytest python/ -v
 
   poc-tests:
-    name: PoC tests (0 dependencies, no API key needed)
+    name: PoC tests ${{ matrix.python-version }} (0 dependencies, no API key needed)
     runs-on: ubuntu-latest
+    # Same reason as python-tests: the PoC is the repository's advertised
+    # zero-friction entry point, so "runs on any supported interpreter" has to
+    # be a tested property of it too, not only of the package.
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       # No install step: the PoC and its tests are deliberately dependency-free
       # (stdlib only, pytest is the only test-runner requirement) -- that is
       # the whole point of it being the zero-friction entry point.
