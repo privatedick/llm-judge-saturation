@@ -1,0 +1,30 @@
+{
+  "title": "Two kinds of saturation: why LLM-judge order bias is hard to measure",
+  "description": "Essay, Lean 4 proofs (0 sorry / 0 axiom, gated by a build-time axiom audit), and a reproducible measurement of LLM-judge order effects across three judges. Includes an offline proof-of-concept that runs without an API key. One name, two mechanisms: saturation can manufacture an order effect, and separately it can destroy the observability needed to measure one.",
+  "upload_type": "software",
+  "license": "MIT",
+  "access_right": "open",
+  "creators": [
+    {
+      "name": "privatedick"
+    }
+  ],
+  "keywords": [
+    "LLM-as-a-judge",
+    "question-order effects",
+    "position bias",
+    "quantum cognition",
+    "QQ equality",
+    "saturation",
+    "Lean 4",
+    "formal verification",
+    "evaluation"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/privatedick/llm-judge-saturation",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ]
+}
