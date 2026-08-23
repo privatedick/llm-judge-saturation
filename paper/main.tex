@@ -1,0 +1,311 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+\usepackage{xcolor}
+
+\newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
+\newtheorem{definition}{Definition}
+
+\title{Two Kinds of Saturation:\\ Why LLM-Judge Order Bias Is Hard to Measure}
+\author{privatedick\thanks{Pseudonymous author. All code, proofs, and raw
+results are public and reproducible at
+\url{https://github.com/privatedick/llm-judge-saturation} (MIT); nothing in
+this paper rests on trusting the author.}}
+\date{August 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Anyone who has used an LLM as a pairwise judge has watched it flip its
+verdict when the two candidates are swapped. The standard remedy---run both
+orders and compare---answers neither of the questions underneath: \emph{why}
+does order matter, and why is \emph{measuring} the effect so easy to get
+wrong? We separate two mechanisms that the word ``saturation'' conflates.
+\emph{Internal} saturation (a clamped accumulator) can \textbf{create} order
+sensitivity: we formalize a clamped belief update and prove, in Lean~4, that
+constant-increment updates commute while the same update under a clamp does
+not. \emph{Output} saturation (near-deterministic judge verdicts) does the
+opposite---it \textbf{destroys} the observability that order statistics
+require. Empirically, using a fully crossed $2\times2$ design that separates
+content-position effects from label-preference effects (a confound in our own
+first design, corrected here), we measure three open-weight judges and one
+proprietary frontier judge: $64$--$68\%$ of judge conditions are saturated,
+$14$ of $18$ (model, item) cells fail an exact-test interpretability gate,
+effective sample sizes collapse to ${\approx}1.1$, and order effects are null
+after Holm correction ($0/18$, replicated across two independent runs). On
+the same tie items where order effects were near zero, label bias was
+$7$--$10\times$ larger---item-specific, not a universal position prior. A
+statistical power analysis shows the exact saturation gate has \emph{zero}
+power below $k{=}29$ samples per condition at the tested threshold, so
+quick-start sample sizes cannot in principle detect what they claim to
+measure. The methodological point: before asking how large an order effect
+is, ask whether the judge's output distribution contains any variance to
+order. We release the crossed design, the gates, the Lean proofs (0 sorry,
+axiom-audited at build time), and an offline proof-of-concept; total
+experimental cost was \$0.46.
+\end{abstract}
+
+\section{Introduction}
+
+LLM-as-judge evaluation asks a model ``which of these two answers is
+better?'' and records the verdict. The verdict is not stable under swapping
+the two candidates, and the field's standard fix is procedural: query both
+orders, check agreement, average. The fix works well enough in practice, but
+it leaves two questions unanswered. First, \emph{why} does order matter at
+all---what is the mechanism? Second, why does \emph{measuring} the effect
+keep going wrong in ways that the both-orders protocol does not catch?
+
+This paper's claim is that the word ``saturation'' is doing double duty over
+two mechanisms with opposite consequences:
+
+\begin{enumerate}
+\item \textbf{Internal saturation can manufacture an order effect.} A
+bounded belief accumulator with a clamp---$x \mapsto \operatorname{clamp}(x
++ \delta)$---has state-dependent increments, and state-dependent increments
+do not commute. We prove the positive and negative halves in Lean~4
+(\S\ref{sec:lean}): clamped updates commute in the interior of the range and
+provably fail to commute at the boundary.
+\item \textbf{Output saturation can hide one---or make its measurement
+meaningless.} A judge whose per-condition output distribution is
+near-deterministic still produces a point verdict, but no variance, no error
+bars, and effectively one observation. Order statistics computed on such a
+distribution are non-identifying. Kang~\cite{kang2026} states this as a
+caveat for QQ-equality audits; we make it operational as an exact test that
+gates every downstream statistic (\S\ref{sec:design}).
+\end{enumerate}
+
+The empirical headline is a null result with a decomposition attached: after
+separating position from label preference by full counterbalancing, we find
+\emph{no} Holm-significant order effects in any of 18 cells across two
+independent runs, on judges where $64$--$68\%$ of conditions are too
+saturated for the question to be well-posed---while label bias on the same
+items is an order of magnitude larger and item-specific. Our own first
+design confounded the two signals and initially suggested an order effect;
+the crossed rerun killed it. We report that correction in place
+(\S\ref{sec:correction}) because the failure is the methodological point of
+the paper.
+
+\section{Background: order effects as non-commutation}
+
+Write $T_A, T_B$ for the state updates of processing item $A$ then $B$. An
+order effect is
+\[
+T_B(T_A(x)) \neq T_A(T_B(x)),
+\]
+i.e.\ the updates fail to commute. Quantum-cognition models instantiate this
+with vectors and projectors and derive a parameter-free structural
+invariant, the \textbf{QQ equality}~\cite{wang2013,wang2014}:
+\[
+p(A_y, B_n) + p(A_n, B_y) \;=\; p(B_y, A_n) + p(B_n, A_y),
+\]
+both orders agree on total ``changed my mind'' probability, however large
+the individual order effect. Two caveats we carry throughout: satisfying QQ
+does not establish the Hilbert-space model~\cite{boyerkassem2016}, and QQ is
+one structural invariant among several, not a structure-vs-noise oracle.
+
+\section{Internal saturation creates non-commutation}
+\label{sec:lean}
+
+Constant additive updates, $x \mapsto x + \delta$ for fixed $\delta$, always
+commute---translations compose order-free. The cheapest way an
+\emph{additive} update becomes order-sensitive is a clamp:
+\begin{definition}[Clamped update]
+$\operatorname{clamp}_{[lo,hi]}(y) = \max(lo, \min(hi, y))$, and the update
+$U_\delta(x) = \operatorname{clamp}_{[lo,hi]}(x + \delta)$.
+\end{definition}
+
+Both halves are machine-checked in Lean 4 (repository,
+\texttt{lean/EvoEcos/ClampedUpdateCommute.lean}, 0 sorry, with a build-time
+axiom audit that fails the build on any axiom outside Lean's standard
+three):
+
+\begin{lemma}[Interior commutation]
+If $x$, $x+a$, $x+a+b$ and their mirrored order all lie in the open interior
+of $[lo,hi]$, then $U_b(U_a(x)) = U_a(U_b(x))$: within the interior the
+clamped update is an affine translation and translations commute.
+\end{lemma}
+
+\begin{proposition}[Saturation breaks commutation]
+There exist $lo, hi, x, a, b$ with the accumulator in range but at the
+boundary where $U_b(U_a(x)) \neq U_a(U_b(x))$: the effective increment
+becomes a function of state, and order sensitivity appears exactly where the
+accumulator saturates.
+\end{proposition}
+
+The same repository proves the perturbation companion used for
+framing/order sensitivity bounds (\texttt{PersuasionOperator.lean}): the
+persuasion power satisfies $|\mathrm{power}(\varphi,\theta)| \le |\sin
+\theta|$ and the bound is tight. The two results together say: internal
+saturation is a \emph{sufficient} mechanism for order sensitivity (not a
+claim that production LLMs implement clamped accumulators), and bounded
+perturbation is the right frame for asking how far order or framing can move
+a decision.
+
+\section{Output saturation destroys observability}
+\label{sec:saturation}
+
+Kang~\cite{kang2026} audits question-order effects in LLMs with the QQ
+equality and flags the caveat that a near-deterministic judge makes the QQ
+comparison non-identifying: with no variance there is no
+``changed-my-mind'' probability to compare across orders. We treat that
+caveat as a first-class measurement gate rather than a footnote.
+
+\begin{definition}[Saturation gate]
+A condition's verdict distribution is \emph{saturated at level $s$} when the
+top outcome probability exceeds $s$ under an exact one-sided binomial test
+($H_0\colon p_{\text{top}} \le s$), not a bare point-estimate threshold: a
+point-estimate check over-flags dispersed judges from finite-sample noise.
+\end{definition}
+
+We report saturation at two levels because they answer different questions:
+the fraction of individual (position, label) conditions that are saturated,
+and the fraction of (model, item) cells in which \emph{any} of the four
+conditions is saturated---the conservative gate under which order statistics
+for that cell are non-identifying.
+
+The gate has a power floor that quick-start designs silently violate. At
+$s = 0.9$ and $\alpha = 0.05$, the exact test has \emph{zero} power below
+$k = 29$ samples per condition: at $k \le 28$ even an all-agree verdict
+string (``AAAA\ldots'') cannot reject the null of non-saturation. The
+crossover at $k=29$ is verified in the repository's test suite by running
+the real exact test on synthetic all-agree lists at $k{=}28$ and $k{=}29$
+(\texttt{python/test\_gate\_power.py}). Our first-pilot defaults sat below
+the floor; the repository's earlier quick-start did too.
+
+\section{Design: crossing position against label}
+\label{sec:design}
+
+A judge asked ``A or B?'' can prefer the first slot (a \emph{position}
+effect) or prefer the token ``B'' (a \emph{label} effect). Every A/B-then-B/A
+protocol without label counterbalancing measures their sum. The design used
+here is a fully crossed $2\times2$ per item: (content order) $\times$
+(label assignment), $k = 40$ samples per condition, temperature $1.0$.
+Decomposition:
+
+\begin{itemize}
+\item \textbf{order effect} = the pure content-position signal (same labels,
+swapped content), Fisher exact test per cell, Holm correction across cells;
+\item \textbf{label bias} = the pure token-prior signal (same content,
+swapped labels).
+\end{itemize}
+
+Three open-weight judges via OpenRouter (DeepSeek v4-flash, Qwen3-8b,
+Mistral NeMo) on six items (three ``tie'' items with no clear winner, three
+clear-winner controls), giving $18$ (model, item) cells and $72$ conditions
+per run; two independent runs on different days. A proprietary frontier
+judge (GPT-5-mini) was added later on a three-item subset. Total API cost
+across all three runs: \$0.46.
+
+\section{Results}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lcc}
+\toprule
+ & Run 1 (08-11) & Run 2 (08-12) \\
+\midrule
+conditions saturated ($s{=}0.9$, exact test) & $46/72$ ($63.9\%$) & $49/72$ ($68.1\%$) \\
+cells failing interpretability gate & $14/18$ & $14/18$ \\
+interpretable cells & $4$ & $4$ \\
+mean order effect, all cells & $0.018$ & $0.024$ \\
+mean order effect, interpretable & $0.041$ & $0.063$ \\
+Holm-significant order effects & $0/18$ & $0/18$ \\
+mean label bias, tie items & $0.456$ & $0.408$ \\
+mean order effect, same tie items & $0.046$ & $0.058$ \\
+mean effective sample size (worst condition) & $1.10$ & $1.10$ \\
+estimated cost & \$0.21 & \$0.21 \\
+\bottomrule
+\end{tabular}
+\caption{Two independent runs, three open-weight judges. The null replicates:
+no cell shows an order effect surviving Holm correction; on the tie items,
+label bias is $7$--$10\times$ the order effect measured on the same items.}
+\end{table}
+
+Three findings, in increasing order of interest:
+
+\textbf{(1) The order-effect null replicates.} Zero of 18 cells per run,
+twice. One cell in Run~2 reached raw $p < .05$ and did not survive Holm; at
+this $k$, a difference of one sample is not a measured magnitude.
+
+\textbf{(2) Most judge conditions are too saturated for the question to be
+well-posed.} Between $64$ and $68\%$ of conditions and $14/18$ cells fail
+the exact gate; effective sample size is ${\approx}1.1$. The judge returns a
+verdict, but the verdict stream carries almost no information about
+\emph{ordering} of anything.
+
+\textbf{(3) Label bias dwarfs order bias and is item-specific.} On the tie
+items---precisely where a position prior would express itself---mean label
+bias was $0.41$--$0.46$ against order effects of $0.046$--$0.058$ on the same
+items. The frontier judge sharpened the picture: GPT-5-mini showed label bias
+of $0.49$ on one tie item (essentially unbiased) and $0.11$ on another
+(strongly B-preferring)---the same judge, two items, opposite characters.
+That is evidence for item-specific token quirks, not a universal position
+prior.
+
+\section{The correction, reported in place}
+\label{sec:correction}
+
+This paper's first design was wrong, and we report the failure because it is
+the methodological point. The original A/B-then-B/A protocol confounded
+content position with label preference; it initially suggested an order
+effect. The crossed rerun decomposed the signal, and the effect moved
+entirely into the label channel. Every number above is from the crossed
+design.
+
+The correction went both directions. An external review (2026-08-12) claimed
+four reproductions of a parser bug and one missing length-check; when
+actually run, three of the four parser examples returned the correct letter
+against the code as shipped, and the length-check was already present and
+already raising. The fixes that were real were applied only after
+reproducing the failure directly---the same discipline this paper argues
+for, applied to its own reviewers. Two review-requested extensions are also
+reported honestly: the proprietary-judge extension succeeded (above); a
+temperature sweep ($T \in \{0, 0.5, 1\}$) was attempted twice, failed twice
+on the same infrastructure cause (a per-read inactivity timeout that a
+trickling connection never trips; now a hard wall-clock deadline), and is
+\emph{not} reported from incomplete runs. The temperature question stays
+open.
+
+\section{Limitations}
+
+The judges are three open-weight models plus one frontier model on a
+six-item panel: this is a measurement-methodology demonstration, not a
+benchmark. The Lean results establish clamped saturation as a
+\emph{sufficient} mechanism for non-commutation, not a claim about
+transformer internals. $k=40$ per condition is above the gate's power floor
+but modest for small effects. The QQ equality is used as a structural
+reference point, and its satisfaction would not establish the Hilbert-space
+model~\cite{boyerkassem2016}.
+
+\section{Reproducibility}
+
+Everything is public at
+\url{https://github.com/privatedick/llm-judge-saturation} (MIT): the crossed
+experiment and its tests, the exact gates with the $k{=}29$ power-floor
+test, the Lean~4 proofs with the build-time axiom audit, raw result JSONs
+for all runs, and an offline proof-of-concept requiring no API key. CI runs
+the full suite on every push; the badges in the README are enforced, not
+asserted. Total experimental cost: \$0.46.
+
+\begin{thebibliography}{9}
+\bibitem{wang2013} Z.~Wang and J.~R.~Busemeyer. A Quantum Question Order
+Model Supported by Empirical Tests of Order Effects on Survey Measurements.
+\emph{Topics in Cognitive Science} 5(4):689--710, 2013.
+\bibitem{wang2014} Z.~Wang, T.~Solloway, R.~M.~Shiffrin, and J.~R.~Busemeyer.
+Context effects produced by question orders reveal quantum nature of human
+judgments. \emph{PNAS} 111(26):9431--9436, 2014.
+\bibitem{boyerkassem2016} M.~Boyer-Kassem, S.~Duch\^ene, and E.~Guerci.
+Testing quantum-like models of judgment for question order effect.
+arXiv:1501.04901, 2016.
+\bibitem{kang2026} P.~Kang. Auditing Question-Order Effects in Large
+Language Models with the QQ Equality: Mechanism Characterization and a
+Saturation Caveat. arXiv:2607.17219, 2026.
+\end{thebibliography}
+
+\end{document}
