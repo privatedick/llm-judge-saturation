@@ -9,3 +9,8 @@ python/uv.lock
 .venv/
 .coverage
 .pytest_cache/
+
+# LaTeX build byproducts (main.pdf stays tracked)
+paper/*.aux
+paper/*.log
+paper/*.out
